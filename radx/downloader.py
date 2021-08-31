@@ -2,12 +2,15 @@
    needed for the RADx pipeline automatically.
 """
 import time
+import os
+import tarfile
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-from radx.settings import GISAID_PASSWORD, GISAID_USERNAME
+from radx.settings import (GISAID_PASSWORD, GISAID_USERNAME,
+                           PATH_TO_GISAID, PATH_TO_DOWNLOADS)
 
 
 class GISAIDDownloader(object):
@@ -22,6 +25,8 @@ class GISAIDDownloader(object):
         self.download_metadata()
         self.wait_for_download()
         self.shutdown_driver()
+        self.move_metadata_file()
+        self.move_sequence_file()
 
     def login(self):
         self.driver.get("https://www.epicov.org/epi3/start")
@@ -68,3 +73,49 @@ class GISAIDDownloader(object):
 
     def shutdown_driver(self):
         self.driver.close()
+
+    def move_metadata_file(self):
+        if PATH_TO_DOWNLOADS:
+            down_dir = PATH_TO_DOWNLOADS
+        else:
+            from pathlib import Path
+            down_dir = str(Path.home() / "Downloads") 
+        work_dir = PATH_TO_GISAID
+        metadata_files = [x for x in os.listdir(down_dir) if x[:13]=="metadata_tsv_" and x[-6:]=="tar.xz"]
+        metadata_arxiv = sorted(metadata_files, reverse=True)[0]
+        src_file = os.path.join(down_dir, metadata_arxiv)
+        dst_file = os.path.join(work_dir, metadata_arxiv)
+        # delete if the archive file and directory exists
+        if os.path.exists(dst_file):
+            os.rmdir(dst_file)
+        if os.path.exists(dst_file[:-6]):
+            os.rmdir(dst_file[:-6])
+        # move the file and extract
+        os.rename(src_file, dst_file)
+        if os.path.exists(dst_file):
+            tar = tarfile.open(dst_file, "r:xz")
+            tar.extractall(work_dir)
+            tar.close()
+
+    def move_sequence_file(self):
+        if PATH_TO_DOWNLOADS:
+            down_dir = PATH_TO_DOWNLOADS
+        else:
+            from pathlib import Path
+            down_dir = str(Path.home() / "Downloads") 
+        work_dir = PATH_TO_GISAID
+        metadata_files = [x for x in os.listdir(down_dir) if x[:15]=="sequence_fasta_" and x[-6:]=="tar.xz"]
+        metadata_arxiv = sorted(metadata_files, reverse=True)[0]
+        src_file = os.path.join(down_dir, metadata_arxiv)
+        dst_file = os.path.join(work_dir, metadata_arxiv)
+        # delete if the archive file and directory exists
+        if os.path.exists(dst_file):
+            os.rmdir(dst_file)
+        if os.path.exists(dst_file[:-6]):
+            os.rmdir(dst_file[:-6])
+        # move the file and extract
+        os.rename(src_file, dst_file)
+        if os.path.exists(dst_file):
+            tar = tarfile.open(dst_file, "r:xz")
+            tar.extractall(work_dir)
+            tar.close()

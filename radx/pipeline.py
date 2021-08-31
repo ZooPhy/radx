@@ -56,6 +56,7 @@ class SRAProcess(Process):
         assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
         # Variables intermediate and result files
         self.sort_bam = self.name+".sorted.bam"
+        self.sort_bai = self.name+".sorted.bai"
         self.trim = self.name+".trimmed"
         self.trim_sort_bam = self.name+".trimmed.sorted.bam"
         self.trim_bam = self.name+".trimmed.bam"
@@ -85,6 +86,7 @@ class SRAProcess(Process):
     def trim_sra(self):
         #trimming primers and base quality
         run_cmd(["bwa", "index", self.sort_bam])
+        run_cmd(["samtools", "index", self.sort_bam])#samtools index file.bam file.bai
         # TODO: Following doesn't seem to work on Mac. Try earlier version.
         run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
