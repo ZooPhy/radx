@@ -1,5 +1,5 @@
-# radx
-RADx pipeline for metagenomic data and analysis of SARS-CoV-2 from wastewater samples.
+# Radx-rad
+RADx-rad pipeline for metagenomic data and analysis of SARS-CoV-2 from wastewater samples.
 
 # Please note: This project is currently under development and not functional.
 
