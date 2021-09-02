@@ -20,3 +20,5 @@ PATH_TO_GISAID = "resources/gisaid/"
 PATH_TO_SRA = "resources/sra/"
 # path local parent working directory
 PATH_TO_JOBS = "resources/jobs/"
+# path to hosting directory for sharing
+PATH_TO_HOSTING = ""

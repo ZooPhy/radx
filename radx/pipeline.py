@@ -1,15 +1,15 @@
 """File containing the main pipeline
 """
 import logging
+import os
 import subprocess
 import time
 from multiprocessing import Process, Queue
-from os import chdir, listdir, makedirs, system
-from os.path import isdir, isfile, join
+from os import chdir, listdir, makedirs, remove, removedirs, system
+from os.path import exists, isdir, isfile, join
 
-from radx.settings import PATH_TO_REFS, PATH_TO_SRA, PATH_TO_JOBS
-from radx.utils import run_cmd
-
+from radx.settings import (PATH_TO_HOSTING, PATH_TO_JOBS, PATH_TO_REFS,
+                           PATH_TO_SRA)
 
 class SRAProcess(Process):
     def __init__(self, fname, queue=None):
@@ -24,11 +24,16 @@ class SRAProcess(Process):
         self.trim_sra()
         self.get_depths()
         self.consensus()
+        self.plot()
+        self.move_files()
+        self.cleanup()
 
     def prep(self):
-        # logging.info("Prepping for %s", self.name)
+        logging.info("Prepping for %s", self.name)
         if not isdir(self.sdir):
             makedirs(self.sdir)
+        self.log_path = self.name+"_radx.log"
+        self.std_out = self.name+"_stdout_radx.log"
         # Source files
         self.sra_r1 = self.name+"_R1.fastq.gz"
         self.sra_r2 = self.name+"_R2.fastq.gz"
@@ -40,16 +45,23 @@ class SRAProcess(Process):
         # move files if they don't exist already
         for sfile in [self.sra_r1, self.sra_r2]:
             if not isfile(join(self.sdir, sfile)):
-                run_cmd(["cp", join(PATH_TO_SRA, sfile), self.sdir])
+                self.run_cmd(["cp", join(PATH_TO_SRA, sfile), self.sdir])
         # TODO: verify if the following are needed for each record
         # or if they can be just done once and referred across SRA jobs
         for sfile in [self.ref_fa, self.ref_gff, self.primer_bed, self.primer_fa, self.primer_tsv]:
             if not isfile(join(self.sdir, sfile)):
-                run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
-        # Update paths
+                self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
+        # Update paths to job specific directory
         if isdir("radx"):
             chdir(self.sdir)
-            logging.info("Current dir contents: %s", " ".join(listdir()))
+            logging.info("Changed directory to work dir: %s", self.sdir)
+            logging.info("Logging will be continued in: %s", join(self.sdir, self.log_path))
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        logging.basicConfig(format='%(asctime)s: Sample '+self.name+' %(levelname)s:%(message)s',
+                            filemode='w', filename=self.log_path,
+                            level=logging.DEBUG)
+        logging.info("Current dir contents: %s", " ".join(listdir()))
         # Verify if all source files exist
         assert all([isfile(x) for x in [self.sra_r1, self.sra_r2]])
         assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
@@ -73,58 +85,140 @@ class SRAProcess(Process):
         self.mask_sort_bam = self.name+".masked.sorted.bam"
         self.mask_sort_dep = self.name+".masked.sorted.depth"
         self.final_mask_0freq = self.name+"_final_masked_0freq"
+        self.stats = self.name+".stats"
+        self.plot_dir = "plots"
+        self.alcov_dir = "alcov"
 
     def align(self):
         # index the reference sequences
-        run_cmd(["bwa", "index", self.ref_fa])
-        run_cmd(["samtools", "faidx", self.ref_fa])
+        self.run_cmd(["bwa", "index", self.ref_fa])
+        self.run_cmd(["samtools", "faidx", self.ref_fa])
         # first align to reference sequence
-        run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
-                 "|", "samtools", "view", "-b", "-F", "4",
-                 "|", "samtools","sort", "-o", self.sort_bam])
+        self.run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
+                      "|", "samtools", "view", "-b", "-F", "4",
+                      "|", "samtools","sort", "-o", self.sort_bam])
 
     def trim_sra(self):
         #trimming primers and base quality
-        run_cmd(["bwa", "index", self.sort_bam])
-        run_cmd(["samtools", "index", self.sort_bam])#samtools index file.bam file.bai
-        # TODO: Following doesn't seem to work on Mac. Try earlier version.
-        run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
+        self.run_cmd(["bwa", "index", self.sort_bam])
+        # self.run_cmd(["samtools", "index", self.sort_bam]) #samtools index file.bam file.bai
+        self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
-        run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
+        self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
         # TODO: Check if there's a better name for the following 
-        run_cmd(["samtools", "mpileup" "-aa" "-A" "-B" "-d" "0" "--reference" +self.ref_fa+ "-Q" "0", self.trim_sort_bam,
-                 "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
+        self.run_cmd(["samtools", "mpileup" "-aa" "-A" "-B" "-d" "0" "--reference" +self.ref_fa+ "-Q" "0", self.trim_sort_bam,
+                      "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
         # index the sortedbam file
-        run_cmd(["samtools", "index", self.trim_sort_bam])
+        self.run_cmd(["samtools", "index", self.trim_sort_bam])
 
     def get_depths(self):
         # get depth of the trimmed and sorted sorted bam file for later
-        run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, ">", self.trim_sort_dep])
-        run_cmd(["samtools", "depth", "-a", self.sort_bam, ">", self.sort_dep])
+        self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, ">", self.trim_sort_dep])
+        self.run_cmd(["samtools", "depth", "-a", self.sort_bam, ">", self.sort_dep])
 
     def consensus(self):
         #getting consensus and info for masking
-        run_cmd(["samtools", "mpileup", "-A", "-d", "0", "-Q", "0", self.trim_sort_bam, 
-                 "|", "ivar", "consensus", "-p", self.trim_cons, "-n", "N"])
-        run_cmd(["bwa", "index", "-p", self.trim_cons, self.trim_cons_fa])
+        self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "-Q", "0", self.trim_sort_bam, 
+                      "|", "ivar", "consensus", "-p", self.trim_cons, "-n", "N"])
+        self.run_cmd(["bwa", "index", "-p", self.trim_cons, self.trim_cons_fa])
 
-        run_cmd(["bwa", "mem", "-k", "5", "-T", "16", self.trim_cons, self.primer_fa, 
-                 "|", "samtools", "view", "-bS", "-F", "4", 
-                 "|", "samtools", "sort", "-o", self.sw_prim_cons_bam])
+        self.run_cmd(["bwa", "mem", "-k", "5", "-T", "16", self.trim_cons, self.primer_fa, 
+                      "|", "samtools", "view", "-bS", "-F", "4", 
+                      "|", "samtools", "sort", "-o", self.sw_prim_cons_bam])
 
-        run_cmd(["samtools", "mpileup", "-A", "-d", "0", "--reference", self.trim_cons_fa, "-Q", "0", self.sw_prim_cons_bam, 
-                 "|", "ivar", "variants", "-p", self.trim_cons, "-t", "0.3"])
+        self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "--reference", self.trim_cons_fa, "-Q", "0", self.sw_prim_cons_bam, 
+                      "|", "ivar", "variants", "-p", self.trim_cons, "-t", "0.3"])
 
-        run_cmd(["bedtools", "bamtobed", "-i", self.sw_prim_cons_bam, ">", self.sw_prim_cons_bed])
+        self.run_cmd(["bedtools", "bamtobed", "-i", self.sw_prim_cons_bam, ">", self.sw_prim_cons_bed])
 
-        run_cmd(["ivar", "getmasked", "-i", self.trim_cons_tsv, "-b", self.sw_prim_cons_bed, "-f", self.primer_tsv, "-p", self.prim_mis_ind])
+        self.run_cmd(["ivar", "getmasked", "-i", self.trim_cons_tsv, "-b", self.sw_prim_cons_bed, "-f", self.primer_tsv, "-p", self.prim_mis_ind])
 
         #final analysis and masking
-        run_cmd(["ivar", "removereads", "-i", self.trim_sort_bam, "-p", self.mask_bam, "-t", self.prim_mis_ind+".txt", "-b", self.primer_bed])
+        self.run_cmd(["ivar", "removereads", "-i", self.trim_sort_bam, "-p", self.mask_bam, "-t", self.prim_mis_ind+".txt", "-b", self.primer_bed])
 
-        run_cmd(["samtools", "sort", "-o", self.mask_sort_bam, self.mask_bam])
+        self.run_cmd(["samtools", "sort", "-o", self.mask_sort_bam, self.mask_bam])
 
-        run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
+        self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
+        # index the masked bam file for alcov analysis
+        self.run_cmd(["samtools", "index", self.mask_sort_bam])
 
-        run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
-                 "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
+        self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
+                      "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
+
+    def move_files(self):
+        if not PATH_TO_HOSTING.strip():
+            logging.info("Skipping move to hosting directory. PATH_TO_HOSTING not configured.")
+            return
+        path_to_move = join(PATH_TO_HOSTING, self.name)
+        if not exists(path_to_move):
+            makedirs(path_to_move)
+        files_to_move = [self.alcov_dir, self.plot_dir]
+        for mfile in files_to_move:
+            self.run_cmd(["mv", mfile, path_to_move])
+
+    def plot(self):
+        if not exists(self.mask_sort_bam):
+            logging.warning("Cannot find the bam file :%s", self.mask_sort_bam)
+            return
+        # use samtools to get stats and then plot
+        # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
+        self.run_cmd(["samtools", "stats", self.mask_sort_bam, ">", self.stats])
+        # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
+        self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
+        # run alcov 
+        if not exists(self.alcov_dir):
+            makedirs(self.alcov_dir)
+        self.run_cmd(["alcov", "find_lineages", self.mask_sort_bam])
+        self.run_cmd(["alcov", "find_mutants", self.mask_sort_bam])
+        self.run_cmd(["alcov", "amplicon_coverage", self.mask_sort_bam])
+        self.run_cmd(["alcov", "gc_depth", self.mask_sort_bam])
+
+    def cleanup(self):
+        logging.info("Running cleanup for %s", self.name)
+        if isdir("radx"):
+            chdir(self.sdir)
+        filelist = listdir()
+        files_to_keep = [
+                            self.sort_bam,
+                            self.trim_sort_bam,
+                            self.mask_sort_bam, 
+                            self.mask_sort_dep,
+                            self.final_mask_0freq,
+                            self.final+".tsv",
+                            self.plot_dir,
+                            self.alcov_dir,
+                            self.stats,
+                            self.log_path,
+                            self.std_out
+                        ]
+        logging.info("Current dir contents: %s", " ".join(filelist))
+        files_to_delete = [x for x in filelist if x not in files_to_keep]
+        logging.info("Files to delete: %s", " ".join(files_to_delete))
+        for dfile in files_to_delete:
+            if isfile(dfile):
+                remove(dfile)
+            else:
+                logging.info("Cannot remove directory %s", dfile)
+                # can be dangerous to remove directory, so disabled for now
+                # removedirs(dfile)
+
+    def run_cmd(self, cmd_list, timeout=None):
+        ret = None
+        # TODO: Subprocess doesn't support the pipe command by default
+        if "|" not in cmd_list and ">" not in cmd_list:
+            logging.info("--- Running SP '%s'", " ".join(cmd_list))
+            with open(self.std_out, "a") as ofile:
+                print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+                if ret.returncode != 0:
+                    logging.info("--- Return code '%s'", ret.returncode)
+        else:
+            if ">" not in cmd_list:
+                cmd_list += [">>", self.std_out]
+            logging.info("--- Running SYS '%s'", " ".join(cmd_list))
+            with open(self.std_out, "a") as ofile:
+                print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+            ret = system(" ".join(cmd_list))
+            if ret != 0:
+                logging.info("--- Return code '%s'", ret)
+        return ret
