@@ -12,19 +12,30 @@ from radx.settings import (PATH_TO_HOSTING, PATH_TO_JOBS, PATH_TO_REFS,
                            PATH_TO_SRA)
 
 class SRAProcess(Process):
-    def __init__(self, fname, queue=None):
+    def __init__(self, fname, overwrite=False, queue=None):
         super(SRAProcess, self).__init__()
         self.name = fname
         self.sdir = join(PATH_TO_JOBS, self.name)
+        self.overwrite = overwrite
 
     def run(self):
         logging.info("Running job for %s", self.name)
+        # The masked sorted file is one of the final files used
+        # so skip running the process if it exists already
+        final_bam_file = join(self.sdir, self.name+".masked.sorted.bam")
+        if not self.overwrite and exists(final_bam_file):
+            logging.info("Found existing file %s. Skipping processing.", final_bam_file)
+            logging.info("To process sample again, please use the overwrite flag.")
+            return
+        # Process the input files
         self.prep()
         self.align()
         self.trim_sra()
         self.get_depths()
         self.consensus()
+        # Analyze files
         self.plot()
+        # Perform logistics and cleanup
         self.move_files()
         self.cleanup()
 
@@ -59,7 +70,7 @@ class SRAProcess(Process):
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(format='%(asctime)s: Sample '+self.name+' %(levelname)s:%(message)s',
-                            filemode='w', filename=self.log_path,
+                            filemode=('w' if self.overwrite else 'a'), filename=self.log_path,
                             level=logging.DEBUG)
         logging.info("Current dir contents: %s", " ".join(listdir()))
         # Verify if all source files exist
@@ -102,49 +113,59 @@ class SRAProcess(Process):
     def trim_sra(self):
         #trimming primers and base quality
         self.run_cmd(["bwa", "index", self.sort_bam])
-        # self.run_cmd(["samtools", "index", self.sort_bam]) #samtools index file.bam file.bai
         self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
         self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
         # TODO: Check if there's a better name for the following 
-        self.run_cmd(["samtools", "mpileup" "-aa" "-A" "-B" "-d" "0" "--reference" +self.ref_fa+ "-Q" "0", self.trim_sort_bam,
-                      "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
-        # index the sortedbam file
+        if not exists(self.final) or self.overwrite:
+            self.run_cmd(["samtools", "mpileup" "-aa" "-A" "-B" "-d" "0" "--reference" +self.ref_fa+ "-Q" "0", self.trim_sort_bam,
+                          "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
+        # index the sortedbam file TODO: The following should be above?
         self.run_cmd(["samtools", "index", self.trim_sort_bam])
 
     def get_depths(self):
         # get depth of the trimmed and sorted sorted bam file for later
-        self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, ">", self.trim_sort_dep])
-        self.run_cmd(["samtools", "depth", "-a", self.sort_bam, ">", self.sort_dep])
+        if not exists(self.trim_sort_dep) or self.overwrite:
+            self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, ">", self.trim_sort_dep])
+        if not exists(self.sort_dep) or self.overwrite:
+            self.run_cmd(["samtools", "depth", "-a", self.sort_bam, ">", self.sort_dep])
 
     def consensus(self):
         #getting consensus and info for masking
-        self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "-Q", "0", self.trim_sort_bam, 
-                      "|", "ivar", "consensus", "-p", self.trim_cons, "-n", "N"])
-        self.run_cmd(["bwa", "index", "-p", self.trim_cons, self.trim_cons_fa])
+        if not exists(self.trim_cons) or self.overwrite:
+            self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "-Q", "0", self.trim_sort_bam, 
+                          "|", "ivar", "consensus", "-p", self.trim_cons, "-n", "N"])
+            self.run_cmd(["bwa", "index", "-p", self.trim_cons, self.trim_cons_fa])
 
-        self.run_cmd(["bwa", "mem", "-k", "5", "-T", "16", self.trim_cons, self.primer_fa, 
-                      "|", "samtools", "view", "-bS", "-F", "4", 
-                      "|", "samtools", "sort", "-o", self.sw_prim_cons_bam])
+        if not exists(self.sw_prim_cons_bam) or self.overwrite:
+            self.run_cmd(["bwa", "mem", "-k", "5", "-T", "16", self.trim_cons, self.primer_fa, 
+                          "|", "samtools", "view", "-bS", "-F", "4", 
+                          "|", "samtools", "sort", "-o", self.sw_prim_cons_bam])
 
         self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "--reference", self.trim_cons_fa, "-Q", "0", self.sw_prim_cons_bam, 
                       "|", "ivar", "variants", "-p", self.trim_cons, "-t", "0.3"])
 
-        self.run_cmd(["bedtools", "bamtobed", "-i", self.sw_prim_cons_bam, ">", self.sw_prim_cons_bed])
+        if not exists(self.sw_prim_cons_bed) or self.overwrite:
+            self.run_cmd(["bedtools", "bamtobed", "-i", self.sw_prim_cons_bam, ">", self.sw_prim_cons_bed])
 
-        self.run_cmd(["ivar", "getmasked", "-i", self.trim_cons_tsv, "-b", self.sw_prim_cons_bed, "-f", self.primer_tsv, "-p", self.prim_mis_ind])
+        if not exists(self.prim_mis_ind) or self.overwrite:
+            self.run_cmd(["ivar", "getmasked", "-i", self.trim_cons_tsv, "-b", self.sw_prim_cons_bed, "-f", self.primer_tsv, "-p", self.prim_mis_ind])
 
         #final analysis and masking
-        self.run_cmd(["ivar", "removereads", "-i", self.trim_sort_bam, "-p", self.mask_bam, "-t", self.prim_mis_ind+".txt", "-b", self.primer_bed])
+        if not exists(self.mask_bam) or self.overwrite:
+            self.run_cmd(["ivar", "removereads", "-i", self.trim_sort_bam, "-p", self.mask_bam, "-t", self.prim_mis_ind+".txt", "-b", self.primer_bed])
 
-        self.run_cmd(["samtools", "sort", "-o", self.mask_sort_bam, self.mask_bam])
+        if not exists(self.mask_sort_bam) or self.overwrite:
+            self.run_cmd(["samtools", "sort", "-o", self.mask_sort_bam, self.mask_bam])
+            # index the masked bam file for alcov analysis
+            self.run_cmd(["samtools", "index", self.mask_sort_bam])
 
-        self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
-        # index the masked bam file for alcov analysis
-        self.run_cmd(["samtools", "index", self.mask_sort_bam])
+        if not exists(self.mask_sort_dep) or self.overwrite:
+            self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
 
-        self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
-                      "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
+        if not exists(self.final_mask_0freq) or self.overwrite:
+            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
+                          "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
 
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
