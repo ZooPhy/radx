@@ -212,7 +212,7 @@ class SRAProcess(Process):
             if not isdir("radx"): #dont print unless in the working directory
                 with open(self.std_out, "a") as ofile:
                     print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
-                ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+                    ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
             else:
                 ret = subprocess.run(cmd_list, check=True)
             if ret.returncode != 0:
