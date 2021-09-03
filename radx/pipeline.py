@@ -83,6 +83,7 @@ class SRAProcess(Process):
         self.prim_mis_ind = "primer_mismatchers_indices"
         self.mask_bam = self.name+".masked.bam"
         self.mask_sort_bam = self.name+".masked.sorted.bam"
+        self.mask_sort_bai = self.name+".masked.sorted.bai"
         self.mask_sort_dep = self.name+".masked.sorted.depth"
         self.final_mask_0freq = self.name+"_final_masked_0freq"
         self.stats = self.name+".stats"
@@ -179,9 +180,10 @@ class SRAProcess(Process):
             chdir(self.sdir)
         filelist = listdir()
         files_to_keep = [
-                            self.sort_bam,
-                            self.trim_sort_bam,
+                            # self.sort_bam,
+                            # self.trim_sort_bam,
                             self.mask_sort_bam, 
+                            self.mask_sort_bai,
                             self.mask_sort_dep,
                             self.final_mask_0freq,
                             self.final+".tsv",
@@ -208,7 +210,8 @@ class SRAProcess(Process):
         if "|" not in cmd_list and ">" not in cmd_list:
             logging.info("--- Running SP '%s'", " ".join(cmd_list))
             with open(self.std_out, "a") as ofile:
-                print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                if not isdir("radx"): #dont print unless in the working directory
+                    print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
                 ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
                 if ret.returncode != 0:
                     logging.info("--- Return code '%s'", ret.returncode)
@@ -216,8 +219,9 @@ class SRAProcess(Process):
             if ">" not in cmd_list:
                 cmd_list += [">>", self.std_out]
             logging.info("--- Running SYS '%s'", " ".join(cmd_list))
-            with open(self.std_out, "a") as ofile:
-                print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+            if not isdir("radx"): #dont print unless in the working directory
+                with open(self.std_out, "a") as ofile:
+                    print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
             ret = system(" ".join(cmd_list))
             if ret != 0:
                 logging.info("--- Return code '%s'", ret)
