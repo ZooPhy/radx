@@ -149,30 +149,30 @@ class SRAProcess(Process):
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
             logging.info("Skipping move to hosting directory. PATH_TO_HOSTING not configured.")
-            return
-        path_to_move = join(PATH_TO_HOSTING, self.name)
-        if not exists(path_to_move):
-            makedirs(path_to_move)
-        files_to_move = [self.alcov_dir, self.plot_dir]
-        for mfile in files_to_move:
-            self.run_cmd(["mv", mfile, path_to_move])
+        else:
+            path_to_move = join(PATH_TO_HOSTING, self.name)
+            if not exists(path_to_move):
+                makedirs(path_to_move)
+            files_to_move = [self.alcov_dir, self.plot_dir]
+            for mfile in files_to_move:
+                self.run_cmd(["mv", mfile, path_to_move])
 
     def plot(self):
         if not exists(self.mask_sort_bam):
             logging.warning("Cannot find the bam file :%s", self.mask_sort_bam)
-            return
-        # use samtools to get stats and then plot
-        # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
-        self.run_cmd(["samtools", "stats", self.mask_sort_bam, ">", self.stats])
-        # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
-        self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
-        # run alcov 
-        if not exists(self.alcov_dir):
-            makedirs(self.alcov_dir)
-        self.run_cmd(["alcov", "find_lineages", self.mask_sort_bam])
-        self.run_cmd(["alcov", "find_mutants", self.mask_sort_bam])
-        self.run_cmd(["alcov", "amplicon_coverage", self.mask_sort_bam])
-        self.run_cmd(["alcov", "gc_depth", self.mask_sort_bam])
+        else:
+            # use samtools to get stats and then plot
+            # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
+            self.run_cmd(["samtools", "stats", self.mask_sort_bam, ">", self.stats])
+            # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
+            self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
+            # run alcov 
+            if not exists(self.alcov_dir):
+                makedirs(self.alcov_dir)
+            self.run_cmd(["alcov", "find_lineages", self.mask_sort_bam])
+            self.run_cmd(["alcov", "find_mutants", self.mask_sort_bam])
+            self.run_cmd(["alcov", "amplicon_coverage", self.mask_sort_bam])
+            self.run_cmd(["alcov", "gc_depth", self.mask_sort_bam])
 
     def cleanup(self):
         logging.info("Running cleanup for %s", self.name)
@@ -209,12 +209,14 @@ class SRAProcess(Process):
         # TODO: Subprocess doesn't support the pipe command by default
         if "|" not in cmd_list and ">" not in cmd_list:
             logging.info("--- Running SP '%s'", " ".join(cmd_list))
-            with open(self.std_out, "a") as ofile:
-                if not isdir("radx"): #dont print unless in the working directory
+            if not isdir("radx"): #dont print unless in the working directory
+                with open(self.std_out, "a") as ofile:
                     print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
                 ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
-                if ret.returncode != 0:
-                    logging.info("--- Return code '%s'", ret.returncode)
+            else:
+                ret = subprocess.run(cmd_list, check=True)
+            if ret.returncode != 0:
+                logging.info("--- Return code '%s'", ret.returncode)
         else:
             if ">" not in cmd_list:
                 cmd_list += [">>", self.std_out]
