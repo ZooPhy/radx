@@ -173,13 +173,13 @@ class SRAProcess(Process):
                           "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
 
     def collect_metrics(self):
-        if not exists(self.mask_sort_bam):
-            logging.warning("Cannot find the bam file :%s", self.mask_sort_bam)
+        if not exists(self.trim_sort_bam):
+            logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
             # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
-            breadth = self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, "|", "awk" , "{c++; if($3>10) total+=1}END{print (total/(c))*100}"])
-            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.mask_sort_bam])
-            mean = self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, "|", "awk", '{c++;s+=$3}END{print s/c}'])
+            breadth = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", "awk" , "{c++; if($3>10) total+=1}END{print (total/(c))*100}"])
+            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam])
+            mean = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", "awk", '{c++;s+=$3}END{print s/c}'])
             with open(self.metrics, "w") as ofile:
                 print("\t".join([self.name, breadth, count, mean]), file=ofile)
 
@@ -195,21 +195,21 @@ class SRAProcess(Process):
                 self.run_cmd(["mv", mfile, path_to_move])
 
     def plot(self):
-        if not exists(self.mask_sort_bam):
-            logging.warning("Cannot find the bam file :%s", self.mask_sort_bam)
+        if not exists(self.trim_sort_bam):
+            logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
             # use samtools to get stats and then plot
             # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
-            self.run_cmd(["samtools", "stats", self.mask_sort_bam, ">", self.stats])
+            self.run_cmd(["samtools", "stats", self.trim_sort_bam, ">", self.stats])
             # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
             self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
             # run alcov 
             if not exists(self.alcov_dir):
                 makedirs(self.alcov_dir)
-            self.run_cmd(["alcov", "find_lineages", self.mask_sort_bam])
-            self.run_cmd(["alcov", "find_mutants", self.mask_sort_bam])
-            self.run_cmd(["alcov", "amplicon_coverage", self.mask_sort_bam])
-            self.run_cmd(["alcov", "gc_depth", self.mask_sort_bam])
+            self.run_cmd(["alcov", "find_lineages", self.trim_sort_bam])
+            self.run_cmd(["alcov", "find_mutants", self.trim_sort_bam])
+            self.run_cmd(["alcov", "amplicon_coverage", self.trim_sort_bam])
+            self.run_cmd(["alcov", "gc_depth", self.trim_sort_bam])
 
     def cleanup(self):
         logging.info("Running cleanup for %s", self.name)
