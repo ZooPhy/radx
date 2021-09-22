@@ -32,8 +32,9 @@ class SRAProcess(Process):
         self.align()
         self.trim_sra()
         self.get_depths()
-        self.consensus()
+        # self.consensus()
         # Analyze files
+        self.collect_metrics()
         self.plot()
         # Perform logistics and cleanup
         self.move_files()
@@ -53,15 +54,20 @@ class SRAProcess(Process):
         self.primer_bed = "swift_primers.bed"
         self.primer_fa = "swift_primers.fasta"
         self.primer_tsv = "swift_primers.tsv"
-        # move files if they don't exist already
-        for sfile in [self.sra_r1, self.sra_r2]:
-            if not isfile(join(self.sdir, sfile)):
-                self.run_cmd(["cp", join(PATH_TO_SRA, sfile), self.sdir])
-        # TODO: verify if the following are needed for each record
-        # or if they can be just done once and referred across SRA jobs
-        for sfile in [self.ref_fa, self.ref_gff, self.primer_bed, self.primer_fa, self.primer_tsv]:
-            if not isfile(join(self.sdir, sfile)):
-                self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
+        # some of the important output files to indicate pipeline processing
+        self.sort_bam = self.name+".sorted.bam"
+        self.trim_sort_bam = self.name+".trimmed.sorted.bam"
+        self.mask_sort_bam = self.name+".masked.sorted.bam"
+        # move files if not fully processed or they don't exist already
+        if not exists(join(self.sdir, self.trim_sort_bam)) or self.overwrite:
+            for sfile in [self.sra_r1, self.sra_r2]:
+                if not isfile(join(self.sdir, sfile)):
+                    self.run_cmd(["cp", join(PATH_TO_SRA, sfile), self.sdir])
+            # TODO: verify if the following are needed for each record
+            # or if they can be just done once and referred across SRA jobs
+            for sfile in [self.ref_fa, self.ref_gff, self.primer_bed, self.primer_fa, self.primer_tsv]:
+                if not isfile(join(self.sdir, sfile)):
+                    self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
         # Update paths to job specific directory
         if isdir("radx"):
             chdir(self.sdir)
@@ -78,10 +84,8 @@ class SRAProcess(Process):
         assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
         assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
         # Variables intermediate and result files
-        self.sort_bam = self.name+".sorted.bam"
         self.sort_bai = self.name+".sorted.bai"
         self.trim = self.name+".trimmed"
-        self.trim_sort_bam = self.name+".trimmed.sorted.bam"
         self.trim_bam = self.name+".trimmed.bam"
         self.final = self.name + "_final"
         self.sort_dep = self.name+".sorted.depth"
@@ -93,13 +97,13 @@ class SRAProcess(Process):
         self.sw_prim_cons_bed = self.name+"_swift_primers_consensus.bed"
         self.prim_mis_ind = "primer_mismatchers_indices"
         self.mask_bam = self.name+".masked.bam"
-        self.mask_sort_bam = self.name+".masked.sorted.bam"
         self.mask_sort_bai = self.name+".masked.sorted.bai"
         self.mask_sort_dep = self.name+".masked.sorted.depth"
         self.final_mask_0freq = self.name+"_final_masked_0freq"
         self.stats = self.name+".stats"
         self.plot_dir = "plots"
         self.alcov_dir = "alcov"
+        self.metrics = self.name+"_metrics.tsv"
 
     def align(self):
         # index the reference sequences
@@ -112,13 +116,14 @@ class SRAProcess(Process):
 
     def trim_sra(self):
         #trimming primers and base quality
-        self.run_cmd(["bwa", "index", self.sort_bam])
+        # TODO: indexing the sorted bam file seems to be taking a lot of memory for some samples
+        # self.run_cmd(["bwa", "index", self.sort_bam])
         self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
         self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
         # TODO: Check if there's a better name for the following 
         if not exists(self.final) or self.overwrite:
-            self.run_cmd(["samtools", "mpileup" "-aa" "-A" "-B" "-d" "0" "--reference" +self.ref_fa+ "-Q" "0", self.trim_sort_bam,
+            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference " +self.ref_fa+ " -Q", "0", self.trim_sort_bam,
                           "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
         # index the sortedbam file TODO: The following should be above?
         self.run_cmd(["samtools", "index", self.trim_sort_bam])
@@ -167,6 +172,17 @@ class SRAProcess(Process):
             self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
                           "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
 
+    def collect_metrics(self):
+        if not exists(self.mask_sort_bam):
+            logging.warning("Cannot find the bam file :%s", self.mask_sort_bam)
+        else:
+            # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
+            breadth = self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, "|", "awk" , "{c++; if($3>10) total+=1}END{print (total/(c))*100}"])
+            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.mask_sort_bam])
+            mean = self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, "|", "awk", '{c++;s+=$3}END{print s/c}'])
+            with open(self.metrics, "w") as ofile:
+                print("\t".join([self.name, breadth, count, mean]), file=ofile)
+
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
             logging.info("Skipping move to hosting directory. PATH_TO_HOSTING not configured.")
@@ -202,17 +218,20 @@ class SRAProcess(Process):
         filelist = listdir()
         files_to_keep = [
                             # self.sort_bam,
-                            # self.trim_sort_bam,
+                            self.sort_dep,
+                            self.trim_sort_bam,
+                            self.trim_sort_dep,
                             self.mask_sort_bam, 
                             self.mask_sort_bai,
                             self.mask_sort_dep,
-                            self.final_mask_0freq,
+                            # self.final_mask_0freq,
                             self.final+".tsv",
                             self.plot_dir,
                             self.alcov_dir,
                             self.stats,
                             self.log_path,
-                            self.std_out
+                            self.std_out,
+                            self.metrics
                         ]
         logging.info("Current dir contents: %s", " ".join(filelist))
         files_to_delete = [x for x in filelist if x not in files_to_keep]
@@ -227,6 +246,7 @@ class SRAProcess(Process):
 
     def run_cmd(self, cmd_list, timeout=None):
         ret = None
+        start_file_list = listdir()
         # TODO: Subprocess doesn't support the pipe command by default
         if "|" not in cmd_list and ">" not in cmd_list:
             logging.info("--- Running SP '%s'", " ".join(cmd_list))
@@ -248,4 +268,6 @@ class SRAProcess(Process):
             ret = system(" ".join(cmd_list))
             if ret != 0:
                 logging.info("--- Return code '%s'", ret)
+        added_file_list = [x for x in listdir() if x not in start_file_list]
+        logging.info("--- Added '%s' files '%s'", len(added_file_list), ", ".join(added_file_list))
         return ret
