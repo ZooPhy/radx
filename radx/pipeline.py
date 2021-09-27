@@ -31,7 +31,7 @@ class SRAProcess(Process):
         self.align()
         self.trim_sra()
         self.get_depths()
-        self.consensus()
+        # self.consensus()
         # Analyze files
         self.collect_metrics()
         self.plot()
