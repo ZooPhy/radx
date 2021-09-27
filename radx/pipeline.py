@@ -22,17 +22,16 @@ class SRAProcess(Process):
         logging.info("Running job for %s", self.name)
         # The masked sorted file is one of the final files used
         # so skip running the process if it exists already
-        final_bam_file = join(self.sdir, self.name+".masked.sorted.bam")
+        final_bam_file = join(self.sdir, self.name+".trimmed.sorted.bam")
         if not self.overwrite and exists(final_bam_file):
             logging.info("Found existing file %s. Skipping processing.", final_bam_file)
             logging.info("To process sample again, please use the overwrite flag.")
-            return
         # Process the input files
         self.prep()
         self.align()
         self.trim_sra()
         self.get_depths()
-        # self.consensus()
+        self.consensus()
         # Analyze files
         self.collect_metrics()
         self.plot()
@@ -80,9 +79,10 @@ class SRAProcess(Process):
                             level=logging.DEBUG)
         logging.info("Current dir contents: %s", " ".join(listdir()))
         # Verify if all source files exist
-        assert all([isfile(x) for x in [self.sra_r1, self.sra_r2]])
-        assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
-        assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
+        if self.overwrite:
+            assert all([isfile(x) for x in [self.sra_r1, self.sra_r2]])
+            assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
+            assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
         # Variables intermediate and result files
         self.sort_bai = self.name+".sorted.bai"
         self.trim = self.name+".trimmed"
@@ -106,18 +106,14 @@ class SRAProcess(Process):
         self.metrics = self.name+"_metrics.tsv"
 
     def align(self):
-        # index the reference sequences
-        self.run_cmd(["bwa", "index", self.ref_fa])
-        self.run_cmd(["samtools", "faidx", self.ref_fa])
         # first align to reference sequence
+        self.run_cmd(["bwa", "index", self.ref_fa])
         self.run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
                       "|", "samtools", "view", "-b", "-F", "4",
                       "|", "samtools","sort", "-o", self.sort_bam])
 
     def trim_sra(self):
         #trimming primers and base quality
-        # TODO: indexing the sorted bam file seems to be taking a lot of memory for some samples
-        # self.run_cmd(["bwa", "index", self.sort_bam])
         self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
         self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
@@ -177,11 +173,15 @@ class SRAProcess(Process):
             logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
             # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
-            breadth = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", "awk" , "{c++; if($3>10) total+=1}END{print (total/(c))*100}"])
-            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam])
-            mean = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", "awk", '{c++;s+=$3}END{print s/c}'])
+            breadth = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                                    "awk '{c++; if($3>10) total+=1} END {print total*100/c}'"],
+                                    redirect=False)
+            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, "|",
+                                  "echo $1"], redirect=False)
+            mean = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                                 "awk '{c++;s+=$3}END{print s/c}'"], redirect=False)
             with open(self.metrics, "w") as ofile:
-                print("\t".join([self.name, breadth, count, mean]), file=ofile)
+                print("\t".join([str(x) for x in [self.name, breadth, count, mean]]), file=ofile)
 
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
@@ -244,13 +244,13 @@ class SRAProcess(Process):
                 # can be dangerous to remove directory, so disabled for now
                 # removedirs(dfile)
 
-    def run_cmd(self, cmd_list, timeout=None):
+    def run_cmd(self, cmd_list, redirect=True, timeout=None):
         ret = None
         start_file_list = listdir()
         # TODO: Subprocess doesn't support the pipe command by default
         if "|" not in cmd_list and ">" not in cmd_list:
             logging.info("--- Running SP '%s'", " ".join(cmd_list))
-            if not isdir("radx"): #dont print unless in the working directory
+            if redirect and not isdir("radx"): #dont print unless in the working directory
                 with open(self.std_out, "a") as ofile:
                     print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
                     ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
@@ -259,13 +259,14 @@ class SRAProcess(Process):
             if ret.returncode != 0:
                 logging.info("--- Return code '%s'", ret.returncode)
         else:
-            if ">" not in cmd_list:
+            if redirect and ">" not in cmd_list:
                 cmd_list += [">>", self.std_out]
             logging.info("--- Running SYS '%s'", " ".join(cmd_list))
-            if not isdir("radx"): #dont print unless in the working directory
+            if redirect and not isdir("radx"): #dont print unless in the working directory
                 with open(self.std_out, "a") as ofile:
                     print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
             ret = system(" ".join(cmd_list))
+            logging.info("--- Return code '%s'", ret)
             if ret != 0:
                 logging.info("--- Return code '%s'", ret)
         added_file_list = [x for x in listdir() if x not in start_file_list]

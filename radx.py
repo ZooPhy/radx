@@ -50,7 +50,7 @@ def main():
                 sra_proc.start()
                 processes.append(sra_proc)
             [proc.join() for proc in processes]
-            logging.info("Finished batch %s", batch)    
+            logging.info("Finished batch %s", batch)
         logging.info("Done")
     else:
         for sra_file in sra_files[:]:
