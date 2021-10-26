@@ -1,30 +1,21 @@
 import argparse
 import logging
-import os
+from os import listdir
+from os.path import join, isdir
 import sys
+import pandas as pd
 from multiprocessing import Queue
 
-from radx import PATH_TO_SRA, SRAProcess
+from radx import PATH_TO_SRA, PATH_TO_JOBS, SRAProcess
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
                     filemode='a', filename='logs/radx.log',
                     level=logging.DEBUG)
 
-def main():
-    '''Main method : parse input arguments and train'''
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--overwrite', action='store_true',
-                        help='Redo all steps and overwrite preexisting files')
-    parser.add_argument('--include', type=str, default=None,
-                        help='Run pipeline on the subset of files (comma separated)')
-    parser.add_argument('--multiproc', action='store_false',
-                        help='Use multiprocessing to run jobs in parallel')
-    parser.add_argument('--maxproc', type=int, default=4,
-                        help='Max processes to run in parallel')
-    args = parser.parse_args()
-    
+def process(args):
     # Get all valid fastq.gz files
-    sra_files = [x for x in os.listdir(PATH_TO_SRA) if x[-8:]=="fastq.gz"]
+    sra_files = [x for x in listdir(PATH_TO_SRA) if x[-8:]=="fastq.gz"]
+    # sra_files = [x for x in listdir(PATH_TO_JOBS) if isdir(join(PATH_TO_JOBS, x))]
     # Store them without the extensions
     sra_files = [x.split(".")[0][:-3] for x in sra_files]
     logging.info("Found %s fastq.gz files from %s samples", len(sra_files), len(set(sra_files)))
@@ -57,6 +48,35 @@ def main():
             logging.info("Processing %s", sra_file)
             sra_proc = SRAProcess(sra_file)
             sra_proc.start()
+
+def summarize(args):
+    with open(join(PATH_TO_JOBS, "metrics.tsv"), "w") as ofile:
+        print("\t".join(["name", "breadth", "count", "mean"]), file=ofile)
+        for x in listdir(PATH_TO_JOBS):
+            if not isdir(join(PATH_TO_JOBS, x)):
+                continue
+            for line in open(join(PATH_TO_JOBS, x, x+"_metrics.tsv")):
+                print(line.strip(), file=ofile)
+
+def main():
+    '''Main method : parse input arguments and train'''
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--overwrite', action='store_true',
+                        help='Redo all steps and overwrite preexisting files')
+    parser.add_argument('--include', type=str, default=None,
+                        help='Run pipeline on the subset of files (comma separated)')
+    parser.add_argument('--metadata', type=str, default=None,
+                        help='Path to metadata file in .tsv format')
+    parser.add_argument('--multiproc', action='store_false',
+                        help='Use multiprocessing to run jobs in parallel')
+    parser.add_argument('--maxproc', type=int, default=4,
+                        help='Max processes to run in parallel')
+    args = parser.parse_args()
+
+    # first process the inputs
+    process(args)
+    # summarize
+    summarize(args)
 
 if __name__ == '__main__':
     main()

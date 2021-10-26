@@ -31,7 +31,6 @@ class SRAProcess(Process):
         self.align()
         self.trim_sra()
         self.get_depths()
-        # self.consensus()
         # Analyze files
         self.collect_metrics()
         self.plot()
@@ -90,6 +89,7 @@ class SRAProcess(Process):
         self.final = self.name + "_final"
         self.sort_dep = self.name+".sorted.depth"
         self.trim_sort_dep = self.name+".trimmed.sorted.depth"
+        self.trim_sort_bai = self.name+".trimmed.sorted.bai"
         self.trim_cons = self.name+".trimmed.consensus"
         self.trim_cons_fa = self.name+".trimmed.consensus.fa"
         self.trim_cons_tsv = self.name+".trimmed.consensus.tsv"
@@ -173,15 +173,16 @@ class SRAProcess(Process):
             logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
             # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
-            breadth = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
-                                    "awk '{c++; if($3>10) total+=1} END {print total*100/c}'"],
-                                    redirect=False)
-            count = self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, "|",
-                                  "echo $1"], redirect=False)
-            mean = self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
-                                 "awk '{c++;s+=$3}END{print s/c}'"], redirect=False)
+            breadth, count, mean = "final.bam.breadth", "final.bam.count", "final.bam.mean"
+            self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                          "awk '{c++; if($3>10) total+=1} END {print total*100/c}'",
+                          ">", breadth], redirect=False)
+            self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, ">", count], redirect=False)
+            self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                                 "awk '{c++;s+=$3}END{print s/c}'", ">", mean], redirect=False)
+            breadth, count, mean = [y.strip() for x in [breadth, count, mean] for y in open(x)]
             with open(self.metrics, "w") as ofile:
-                print("\t".join([str(x) for x in [self.name, breadth, count, mean]]), file=ofile)
+                ofile.write("\t".join([self.name, breadth, count, mean]))
 
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
@@ -220,6 +221,7 @@ class SRAProcess(Process):
                             # self.sort_bam,
                             self.sort_dep,
                             self.trim_sort_bam,
+                            self.trim_sort_bai,
                             self.trim_sort_dep,
                             self.mask_sort_bam, 
                             self.mask_sort_bai,
@@ -247,28 +249,33 @@ class SRAProcess(Process):
     def run_cmd(self, cmd_list, redirect=True, timeout=None):
         ret = None
         start_file_list = listdir()
-        # TODO: Subprocess doesn't support the pipe command by default
-        if "|" not in cmd_list and ">" not in cmd_list:
-            logging.info("--- Running SP '%s'", " ".join(cmd_list))
-            if redirect and not isdir("radx"): #dont print unless in the working directory
-                with open(self.std_out, "a") as ofile:
-                    print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
-                    ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+        try:
+            # TODO: Subprocess doesn't support the pipe command by default
+            if "|" not in cmd_list and ">" not in cmd_list:
+                logging.info("--- Running SP '%s'", " ".join(cmd_list))
+                if redirect and not isdir("radx"): #dont print unless in the working directory
+                    with open(self.std_out, "a") as ofile:
+                        print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                        ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+                else:
+                    ret = subprocess.run(cmd_list, check=True)
+                if ret.returncode != 0:
+                    logging.info("--- Return code '%s'", ret.returncode)
             else:
-                ret = subprocess.run(cmd_list, check=True)
-            if ret.returncode != 0:
-                logging.info("--- Return code '%s'", ret.returncode)
-        else:
-            if redirect and ">" not in cmd_list:
-                cmd_list += [">>", self.std_out]
-            logging.info("--- Running SYS '%s'", " ".join(cmd_list))
-            if redirect and not isdir("radx"): #dont print unless in the working directory
-                with open(self.std_out, "a") as ofile:
-                    print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
-            ret = system(" ".join(cmd_list))
-            logging.info("--- Return code '%s'", ret)
-            if ret != 0:
+                if redirect and ">" not in cmd_list:
+                    cmd_list += [">>", self.std_out]
+                logging.info("--- Running SYS '%s'", " ".join(cmd_list))
+                if redirect and not isdir("radx"): #dont print unless in the working directory
+                    with open(self.std_out, "a") as ofile:
+                        print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                ret = system(" ".join(cmd_list))
                 logging.info("--- Return code '%s'", ret)
-        added_file_list = [x for x in listdir() if x not in start_file_list]
-        logging.info("--- Added '%s' files '%s'", len(added_file_list), ", ".join(added_file_list))
+                if ret != 0:
+                    logging.info("--- Return code '%s'", ret)
+            added_file_list = [x for x in listdir() if x not in start_file_list]
+            if not isdir("radx"):
+                logging.info("--- Added '%s' files '%s'", len(added_file_list), ", ".join(added_file_list))
+        except Exception as e:
+            logging.info("--- ERROR encountered when processing command '%s'    Message: '%s'", 
+                         ", ".join(cmd_list), repr(e))
         return ret
