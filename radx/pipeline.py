@@ -30,6 +30,7 @@ class SRAProcess(Process):
         self.prep()
         self.align()
         self.trim_sra()
+        self.merge()
         self.get_depths()
         # Analyze files
         self.collect_metrics()
@@ -99,7 +100,10 @@ class SRAProcess(Process):
         self.mask_bam = self.name+".masked.bam"
         self.mask_sort_bai = self.name+".masked.sorted.bai"
         self.mask_sort_dep = self.name+".masked.sorted.depth"
-        self.final_mask_0freq = self.name+"_final_masked_0freq"
+        self.final_ivar_0freq = self.name+"_final_ivar_0freq"
+        self.trim_sort_indelqual = self.name+"trim_sort_indelqual"
+        self.final_lofreq = self.name+"fina_lofreq"
+        self.variants_merged = self.name+"variants_merged"
         self.stats = self.name+".stats"
         self.plot_dir = "plots"
         self.alcov_dir = "alcov"
@@ -117,12 +121,19 @@ class SRAProcess(Process):
         self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
         #checking trimmed vs non trimmed
         self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
-        # TODO: Check if there's a better name for the following 
+        # TODO: Check if there's a better name for the following
         if not exists(self.final) or self.overwrite:
             self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference " +self.ref_fa+ " -Q", "0", self.trim_sort_bam,
-                          "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
+                          "|", "ivar", "variants", "-p", self.final, "-t", "0", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
+        if not exists(self.final_lofreq) or self.overwrite:
+            self.run_cmd(["lofreq", "indelqual", "--dindel", "-f", self.ref_fa, self.trim_sort_bam, "-o", self.trim_sort_indelqual])
+            self.run_cmd(["lofreq", "call", "-f", self.ref_fa, "--call_indels", "-o", self.variants_merged, self.trim_sort_indelqual])
         # index the sortedbam file TODO: The following should be above?
         self.run_cmd(["samtools", "index", self.trim_sort_bam])
+
+    def merge(self):
+        if not exists(self.variants_merged) or self.overwrite: 
+            subprocess.run(["python3", "merge_variants.py", "-i", self.final, "-l", self.final_lofreq, "-o", self.variants_merged])
 
     def get_depths(self):
         # get depth of the trimmed and sorted sorted bam file for later
@@ -164,9 +175,9 @@ class SRAProcess(Process):
         if not exists(self.mask_sort_dep) or self.overwrite:
             self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
 
-        if not exists(self.final_mask_0freq) or self.overwrite:
-            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
-                          "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
+        if not exists(self.final_ivar_0freq) or self.overwrite:
+            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam,
+                          "|", "ivar", "variants", "-p", self.final_ivar_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
 
     def collect_metrics(self):
         if not exists(self.trim_sort_bam):
@@ -233,7 +244,9 @@ class SRAProcess(Process):
                             self.stats,
                             self.log_path,
                             self.std_out,
-                            self.metrics
+                            self.metrics,
+                            self.variants_merged+".tsv",
+                            self.final_lofreq+".vcf"
                         ]
         logging.info("Current dir contents: %s", " ".join(filelist))
         files_to_delete = [x for x in filelist if x not in files_to_keep]
