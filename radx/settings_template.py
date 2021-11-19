@@ -3,6 +3,11 @@
 # Copy settings_template.py into a new file and rename the new file to to settings.py  
 # Do not commit settings.py to GitHub repository as it may contain passwords
 
+### Important paths - REQUIRED
+# path where reference sequences (fasta, primers etc.) are held
+PATH_TO_REFS = "resources/refs/"
+
+## Paths for secondary tasks - NOT REQUIRED
 ### We use the Selenium library to automatically download GISAID FASTA and metadata files
 SELENIUM_BROWSER = "chrome"
 
@@ -10,15 +15,12 @@ SELENIUM_BROWSER = "chrome"
 GISAID_USERNAME = ""
 GISAID_PASSWORD = ""
 
-### Important paths
-# path where reference sequences (fasta, primers etc.) are held
-PATH_TO_REFS = "resources/refs/"
+# path where mutation info needs to be stored - 
+PATH_TO_MUTATIONS = "resources/mutations/"
+# path where alcov is available
+PATH_TO_ALCOV = "../alcov/"
 # path where GISAID sequences are stored
 PATH_TO_DOWNLOADS = ""
 PATH_TO_GISAID = "resources/gisaid/"
-# path where local fastq.gz files are stored
-PATH_TO_SRA = "resources/sra/"
-# path local parent working directory
-PATH_TO_JOBS = "resources/jobs/"
 # path to hosting directory for sharing
 PATH_TO_HOSTING = ""
