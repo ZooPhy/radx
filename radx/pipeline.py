@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import time
+import pandas as pd
 from multiprocessing import Process, Queue
 from os import chdir, listdir, makedirs, remove, removedirs, system
 from os.path import exists, isdir, isfile, join
@@ -101,9 +102,9 @@ class SRAProcess(Process):
         self.metrics = self.name+"_metrics.tsv"
 
     def align(self):
-        # first align to reference sequence
-        self.run_cmd(["bwa", "index", self.ref_fa])
         if not exists(self.sort_bam) or self.overwrite:
+            # first align to reference sequence
+            self.run_cmd(["bwa", "index", self.ref_fa])
             self.run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
                         "|", "samtools", "view", "-b", "-F", "4",
                         "|", "samtools","sort", "-o", self.sort_bam])
@@ -131,16 +132,20 @@ class SRAProcess(Process):
             self.run_cmd(["lofreq", "call", "-f", self.ref_fa, "--call-indels", "-o", self.final_lofreq, self.trim_sort_indelqual])
         
         # Read ivar and lofreq
-        ivar_calls = read_ivar(self.final_ivar)
-        lofreq_calls = read_lofreq(self.final_lofreq)
+        ivar_calls = read_ivar(self.final_ivar) if exists(self.final_ivar) else pd.DataFrame()
+        if len(ivar_calls.index) == 0:
+            logging.warning("Empty ivar dataframe :%s", self.final_ivar)
+        lofreq_calls = read_lofreq(self.final_lofreq) if exists(self.final_lofreq) else pd.DataFrame()
+        if len(lofreq_calls.index) == 0:
+            logging.warning("Empty lofreq dataframe :%s", self.final_lofreq)
         merged_calls = merge_calls(ivar_calls, lofreq_calls)
         filtered_merged_calls = filter_merged_calls(merged_calls)
         filtered_merged_calls.to_csv(self.variants_merged, sep="\t", index=False)
-        # if not exists(self.variants_merged) or self.overwrite: 
-        #     subprocess.run(["python3", "merge_variants.py", "-i", self.final_ivar, "-l", self.final_lofreq, "-o", self.variants_merged])
         with open("variants.csv", "w") as ofile:
             if "Variant" in filtered_merged_calls.columns.tolist():
                 print(",".join(filtered_merged_calls["Variant"].tolist()), end="", file=ofile)
+            else:
+                print("", file=ofile)
 
     def collect_metrics(self):
         if not exists(self.trim_sort_bam):
@@ -154,7 +159,12 @@ class SRAProcess(Process):
             self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, ">", count], redirect=False)
             self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
                           "awk '{c++;s+=$3}END{print s/c}'", ">", mean], redirect=False)
-            breadth, count, mean = [y.strip() for x in [breadth, count, mean] for y in open(x)]
+            breadth = [y for y in open(breadth)]
+            breadth = breadth[0].strip() if breadth else "0" 
+            count = [y for y in open(count)]
+            count = count[0].strip() if count else "0" 
+            mean = [y for y in open(mean)]
+            mean = mean[0].strip() if mean else "0" 
             variants = [y for y in open(variants)]
             variants = variants[0].strip() if variants else "" 
             with open(self.metrics, "w") as ofile:
@@ -194,6 +204,7 @@ class SRAProcess(Process):
             chdir(self.sdir)
         filelist = listdir()
         files_to_keep = [
+                            self.sort_bam,
                             self.sort_dep,
                             self.trim_sort_bam,
                             self.trim_sort_bai,
@@ -242,7 +253,6 @@ class SRAProcess(Process):
                     with open(self.std_out, "a") as ofile:
                         print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
                 ret = system(" ".join(cmd_list))
-                logging.info("--- Return code '%s'", ret)
                 if ret != 0:
                     logging.info("--- Return code '%s'", ret)
             added_file_list = [x for x in listdir() if x not in start_file_list]

@@ -1,12 +1,12 @@
 import argparse
 import logging
 from os import listdir
-from os.path import join, isdir
+from os.path import join, isdir, exists
 import sys
 import pandas as pd
 from multiprocessing import Queue
 
-from radx import PATH_TO_SRA, PATH_TO_JOBS, SRAProcess
+from radx import SRAProcess
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
                     filemode='a', filename='logs/radx.log',
@@ -15,7 +15,7 @@ logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
 def process(args):
     # Get all valid fastq.gz files
     sra_files = [x for x in listdir(args.input) if x[-8:]=="fastq.gz"]
-    # sra_files = [x for x in listdir(PATH_TO_JOBS) if isdir(join(PATH_TO_JOBS, x))]
+    # sra_files = [x for x in listdir(PATH_TO_JOBS) if isdir(join(args.output, x))]
     # Store them without the extensions
     sra_files = [x.split(".")[0][:-3] for x in sra_files]
     logging.info("Found %s fastq.gz files from %s samples", len(sra_files), len(set(sra_files)))
@@ -57,8 +57,12 @@ def summarize(args):
         for x in listdir(args.output):
             if not isdir(join(args.output, x)):
                 continue
-            for line in open(join(args.output, x, x+"_metrics.tsv")):
-                print(line.strip(), file=ofile)
+            metric_file = join(args.output, x, x+"_metrics.tsv")
+            if exists(metric_file):
+                for line in open(metric_file):
+                    print(line.strip(), file=ofile)
+            else:
+                print("\t".join([x, "", "", "", ""]), file=ofile)
 
 def main():
     '''Main method : parse input arguments and train'''

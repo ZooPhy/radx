@@ -1,5 +1,5 @@
 import logging
-import os
+from os.path import exists
 import vcf
 import pandas as pd
 import numpy as np
@@ -62,6 +62,7 @@ def read_lofreq(filename):
 def annotate_mutations(row):
     mutations = []
     gene = next((gene for gene, (first, last) in GENE_MAP.items() if first <= row["POS"] <= last), "")
+    print(row)
     if gene != "" and row["PASS"] == True and "+" not in row["ALT"]:
         aa_pos = int((row["POS"] - GENE_MAP[gene][0]) // 3 + 1)
         mutations.append(f"{gene}:{row['REF_AA']}{str(aa_pos)}{row['ALT_AA']}")
@@ -69,9 +70,9 @@ def annotate_mutations(row):
 
 def merge_calls(ivar, lofreq):
     if ivar.empty:
-        return ivar
-    elif lofreq.empty:
         return lofreq
+    elif lofreq.empty:
+        return ivar
     merged = pd.concat([lofreq, ivar[ivar['ALT_FREQ'] > 0.01]], ignore_index=True)
     merged = merged.drop_duplicates(subset=["Variant"], keep='last') # keeps the ivar information for amino acid anotation
     merged = merged.sort_values(by=["POS"])
@@ -81,8 +82,12 @@ def merge_calls(ivar, lofreq):
     return merged
 
 def filter_merged_calls(merged, min_af=0.05):
-    filtered_merged = merged[~((merged["ALT_FREQ"] < min_af))]
-    filtered_merged = filtered_merged[~filtered_merged['PASS'].isin([False])]
-    return filtered_merged
+    if "ALT_FREQ" in merged:
+        filtered_merged = merged[~((merged["ALT_FREQ"] < min_af))]
+        if "PASS" in filtered_merged:
+            filtered_merged = filtered_merged[~filtered_merged['PASS'].isin([False])]
+        return filtered_merged
+    else:
+        return merged
 
 
