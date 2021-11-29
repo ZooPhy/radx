@@ -53,8 +53,6 @@ class SRAProcess(Process):
         self.ref_fa = "NC_045512.2.fa"
         self.ref_gff = "NC_045512.2.gff"
         self.primer_bed = "swift_primers.bed"
-        self.primer_fa = "swift_primers.fasta"
-        self.primer_tsv = "swift_primers.tsv"
         # some of the important output files to indicate pipeline processing
         self.sort_bam = self.name+".sorted.bam"
         self.trim_sort_bam = self.name+".trimmed.sorted.bam"
@@ -63,11 +61,11 @@ class SRAProcess(Process):
             for sfile in [self.sra_r1, self.sra_r2]:
                 if not isfile(join(self.sdir, sfile)):
                     self.run_cmd(["cp", join(self.in_dir, sfile), self.sdir])
-            # TODO: verify if the following are needed for each record
-            # or if they can be just done once and referred across SRA jobs
-            for sfile in [self.ref_fa, self.ref_gff, self.primer_bed, self.primer_fa, self.primer_tsv]:
-                if not isfile(join(self.sdir, sfile)):
-                    self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
+        # TODO: verify if the following are needed for each record
+        # or if they can be just done once and referred across SRA jobs
+        for sfile in [self.ref_fa, self.ref_gff, self.primer_bed]:
+            if not isfile(join(self.sdir, sfile)):
+                self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
         # Update paths to job specific directory
         if isdir("radx"):
             chdir(self.sdir)
@@ -83,7 +81,7 @@ class SRAProcess(Process):
         if self.overwrite:
             assert all([isfile(x) for x in [self.sra_r1, self.sra_r2]])
             assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
-            assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
+            assert all([isfile(x) for x in [self.primer_bed]])
         # Variables intermediate and result files
         self.sort_bai = self.name+".sorted.bai"
         self.trim = self.name+".trimmed"
