@@ -12,6 +12,7 @@ from os.path import exists, isdir, isfile, join
 from radx.settings import PATH_TO_HOSTING, PATH_TO_REFS
 from radx.utils import (read_ivar, read_lofreq, merge_calls,
                         filter_merged_calls)
+
 class SRAProcess(Process):
     def __init__(self, fname, in_dir, out_dir, overwrite=False, queue=None):
         super(SRAProcess, self).__init__()

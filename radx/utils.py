@@ -70,9 +70,9 @@ def annotate_mutations(row):
 
 def merge_calls(ivar, lofreq):
     if ivar.empty:
-        return lofreq
-    elif lofreq.empty:
         return ivar
+    elif lofreq.empty:
+        return lofreq
     merged = pd.concat([lofreq, ivar[ivar['ALT_FREQ'] > 0.01]], ignore_index=True)
     merged = merged.drop_duplicates(subset=["Variant"], keep='last') # keeps the ivar information for amino acid anotation
     merged = merged.sort_values(by=["POS"])
