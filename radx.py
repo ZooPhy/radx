@@ -7,6 +7,7 @@ import pandas as pd
 from multiprocessing import Queue
 
 from radx import SRAProcess
+from radx import GISAIDDownloader
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
                     filemode='a', filename='logs/radx.log',
@@ -64,6 +65,14 @@ def summarize(args):
             else:
                 print("\t".join([x, "", "", "", ""]), file=ofile)
 
+def download_gisaid():
+    # download data
+    gdownloader = GISAIDDownloader()
+    gdownloader.dump_gisaid_data()
+    # download metadata
+    gdownloader = GISAIDDownloader()
+    gdownloader.dump_gisaid_metadata()
+
 def main():
     '''Main method : parse input arguments and train'''
     parser = argparse.ArgumentParser()
@@ -90,3 +99,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    # download_gisaid()
