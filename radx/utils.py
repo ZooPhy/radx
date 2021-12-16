@@ -25,8 +25,9 @@ def read_ivar(filename):
                                     np.nan if row["ALT"][0] == "-" else \
                                     (str(row["POS"]) +  ":" + str(row["ALT"][1:]) \
                                      if row["ALT"][0] == "+" else \
-                                     str(row["REF"]) + str(row["POS"]) +  str(row["ALT"])), axis=1)                                     
+                                     str(row["REF"]) + str(row["POS"]) +  str(row["ALT"])), axis=1)
     ivar_calls = ivar_calls.dropna(subset=["Variant"]).drop_duplicates(subset=["Variant"])
+    ivar_calls["SOURCE"] = "ivar"
     return ivar_calls
 
 def read_lofreq(filename):
@@ -57,12 +58,12 @@ def read_lofreq(filename):
                                          str(row["POS"] + len(row["REF"][1:]) + 1) if len(row["REF"]) > 1 else \
                                          str(row["REF"]) + str(row["POS"]) + \
                                          str(row["ALT"])), axis=1)
+    lofreq_calls["SOURCE"] = "lofreq"
     return lofreq_calls
 
 def annotate_mutations(row):
     mutations = []
     gene = next((gene for gene, (first, last) in GENE_MAP.items() if first <= row["POS"] <= last), "")
-    print(row)
     if gene != "" and row["PASS"] == True and "+" not in row["ALT"]:
         aa_pos = int((row["POS"] - GENE_MAP[gene][0]) // 3 + 1)
         mutations.append(f"{gene}:{row['REF_AA']}{str(aa_pos)}{row['ALT_AA']}")
@@ -74,7 +75,16 @@ def merge_calls(ivar, lofreq):
     elif lofreq.empty:
         return lofreq
     merged = pd.concat([lofreq, ivar[ivar['ALT_FREQ'] > 0.01]], ignore_index=True)
-    merged = merged.drop_duplicates(subset=["Variant"], keep='last') # keeps the ivar information for amino acid anotation
+    # We want to keep mutations that are common in both ivar and lofreq
+    ivar_snps = set([x for x in merged[merged["SOURCE"]=="ivar"]["Variant"] if "-" not in x and ":" not in x])
+    lofreq_snps = set([x for x in merged[merged["SOURCE"]=="lofreq"]["Variant"] if "-" not in x and ":" not in x])
+    # remove mutations that were not found in both ivar and lofreq
+    outer_snps = ivar_snps.symmetric_difference(lofreq_snps)
+    before = len(merged.index)
+    merged = merged[~merged['Variant'].isin(outer_snps)]
+    logging.info("Removed %s symmetric difference mutations on ivar and lofreq", (before-len(merged.index)))
+    # from redundant mutations, keeps the ivar information for amino acid anotation
+    merged = merged.drop_duplicates(subset=["Variant"], keep='last')
     merged = merged.sort_values(by=["POS"])
     if merged.empty:
         return merged
@@ -89,5 +99,3 @@ def filter_merged_calls(merged, min_af=0.05):
         return filtered_merged
     else:
         return merged
-
-

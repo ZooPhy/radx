@@ -37,7 +37,7 @@ class SRAProcess(Process):
         self.variants()
         # Analyze files
         self.collect_metrics()
-        # self.plot()
+        self.plot()
         # Perform logistics and cleanup
         self.move_files()
         self.cleanup()
@@ -185,9 +185,7 @@ class SRAProcess(Process):
             logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
             # use samtools to get stats and then plot
-            # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
             self.run_cmd(["samtools", "stats", self.trim_sort_bam, ">", self.stats])
-            # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
             self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
             # run alcov 
             if not exists(self.alcov_dir):
