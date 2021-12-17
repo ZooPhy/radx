@@ -1,4 +1,4 @@
-# RADx-rad
+# RADx-rad v0.2
 RADx-rad pipeline for metagenomic data and analysis of SARS-CoV-2 from wastewater samples.
 
 ## Please note: This project is currently under development.
@@ -11,8 +11,8 @@ Currently, the architecture and information flow in this pipeline is designed as
 Please install the following 
 * [Python 3.7+](https://www.python.org) - Our code runs on Python
 * [BWA 0.7.17](https://github.com/lh3/bwa)
-* [htslib 1.12](http://www.htslib.org/download/)
-* [samtools 1.12](http://www.htslib.org/download/)
+* [htslib 1.14](http://www.htslib.org/download/)
+* [samtools 1.14](http://www.htslib.org/download/)
 * [iVar 1.3](https://github.com/andersen-lab/ivar) - Mac users, please install iVar from source and not from conda.
 * [bedtools 2.30.0](https://bedtools.readthedocs.io/en/latest/content/installation.html)
 * [alcov 0.1.1](https://github.com/amagge/alcov/) - fork of the original project available at (https://github.com/Ellmen/alcov/)
