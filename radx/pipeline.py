@@ -4,23 +4,27 @@ import logging
 import os
 import subprocess
 import time
+import pandas as pd
 from multiprocessing import Process, Queue
 from os import chdir, listdir, makedirs, remove, removedirs, system
 from os.path import exists, isdir, isfile, join
 
-from radx.settings import (PATH_TO_HOSTING, PATH_TO_JOBS, PATH_TO_REFS,
-                           PATH_TO_SRA)
+from radx.settings import PATH_TO_HOSTING, PATH_TO_REFS, PATH_TO_AGGREGATE
+from radx.utils import (read_ivar, read_lofreq, merge_calls,
+                        filter_merged_calls)
 
 class SRAProcess(Process):
-    def __init__(self, fname, overwrite=False, queue=None):
+    def __init__(self, fname, in_dir, out_dir, overwrite=False, queue=None):
         super(SRAProcess, self).__init__()
         self.name = fname
-        self.sdir = join(PATH_TO_JOBS, self.name)
+        self.in_dir = in_dir
+        self.out_dir = out_dir
         self.overwrite = overwrite
 
     def run(self):
         logging.info("Running job for %s", self.name)
-        # The masked sorted file is one of the final files used
+        self.sdir = join(self.out_dir, self.name)
+        # The trimmed sorted file is one of the final files used
         # so skip running the process if it exists already
         final_bam_file = join(self.sdir, self.name+".trimmed.sorted.bam")
         if not self.overwrite and exists(final_bam_file):
@@ -29,8 +33,8 @@ class SRAProcess(Process):
         # Process the input files
         self.prep()
         self.align()
-        self.trim_sra()
-        self.get_depths()
+        self.trim_to_bam()
+        self.variants()
         # Analyze files
         self.collect_metrics()
         self.plot()
@@ -50,22 +54,19 @@ class SRAProcess(Process):
         self.ref_fa = "NC_045512.2.fa"
         self.ref_gff = "NC_045512.2.gff"
         self.primer_bed = "swift_primers.bed"
-        self.primer_fa = "swift_primers.fasta"
-        self.primer_tsv = "swift_primers.tsv"
         # some of the important output files to indicate pipeline processing
         self.sort_bam = self.name+".sorted.bam"
         self.trim_sort_bam = self.name+".trimmed.sorted.bam"
-        self.mask_sort_bam = self.name+".masked.sorted.bam"
         # move files if not fully processed or they don't exist already
         if not exists(join(self.sdir, self.trim_sort_bam)) or self.overwrite:
             for sfile in [self.sra_r1, self.sra_r2]:
                 if not isfile(join(self.sdir, sfile)):
-                    self.run_cmd(["cp", join(PATH_TO_SRA, sfile), self.sdir])
-            # TODO: verify if the following are needed for each record
-            # or if they can be just done once and referred across SRA jobs
-            for sfile in [self.ref_fa, self.ref_gff, self.primer_bed, self.primer_fa, self.primer_tsv]:
-                if not isfile(join(self.sdir, sfile)):
-                    self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
+                    self.run_cmd(["cp", join(self.in_dir, sfile), self.sdir])
+        # TODO: verify if the following are needed for each record
+        # or if they can be just done once and referred across SRA jobs
+        for sfile in [self.ref_fa, self.ref_gff, self.primer_bed]:
+            if not isfile(join(self.sdir, sfile)):
+                self.run_cmd(["cp", join(PATH_TO_REFS, sfile), self.sdir])
         # Update paths to job specific directory
         if isdir("radx"):
             chdir(self.sdir)
@@ -81,108 +82,131 @@ class SRAProcess(Process):
         if self.overwrite:
             assert all([isfile(x) for x in [self.sra_r1, self.sra_r2]])
             assert all([isfile(x) for x in [self.ref_fa, self.ref_gff]])
-            assert all([isfile(x) for x in [self.primer_bed, self.primer_fa, self.primer_tsv]])
+            assert all([isfile(x) for x in [self.primer_bed]])
         # Variables intermediate and result files
         self.sort_bai = self.name+".sorted.bai"
         self.trim = self.name+".trimmed"
         self.trim_bam = self.name+".trimmed.bam"
-        self.final = self.name + "_final"
+        self.final_ivar = self.name + "_ivar.tsv"
         self.sort_dep = self.name+".sorted.depth"
         self.trim_sort_dep = self.name+".trimmed.sorted.depth"
-        self.trim_sort_bai = self.name+".trimmed.sorted.bai"
-        self.trim_cons = self.name+".trimmed.consensus"
-        self.trim_cons_fa = self.name+".trimmed.consensus.fa"
-        self.trim_cons_tsv = self.name+".trimmed.consensus.tsv"
-        self.sw_prim_cons_bam = self.name+"_swift_primers_consensus.bam"
-        self.sw_prim_cons_bed = self.name+"_swift_primers_consensus.bed"
-        self.prim_mis_ind = "primer_mismatchers_indices"
-        self.mask_bam = self.name+".masked.bam"
-        self.mask_sort_bai = self.name+".masked.sorted.bai"
-        self.mask_sort_dep = self.name+".masked.sorted.depth"
-        self.final_mask_0freq = self.name+"_final_masked_0freq"
+        self.trim_sort_bai = self.name+".trimmed.sorted.bam.bai"
+        self.out_r1 = self.name+"_R1.fastq"
+        self.out_r2 = self.name+"_R2.fastq"
+        
+        self.trim_sort_indelqual = self.name+"_trim_sort_indelqual"
+        self.final_lofreq = self.name+"_lofreq.vcf"
+        self.variants_merged = self.name+"_variants_merged.tsv"
         self.stats = self.name+".stats"
         self.plot_dir = "plots"
-        self.alcov_dir = "alcov"
+        self.freyja_variants = self.name+"_freyja_variants.tsv"
+        self.freyja_summary = self.name+"_freyja_summary.tsv"
         self.metrics = self.name+"_metrics.tsv"
 
     def align(self):
-        # first align to reference sequence
-        self.run_cmd(["bwa", "index", self.ref_fa])
-        self.run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
-                      "|", "samtools", "view", "-b", "-F", "4",
-                      "|", "samtools","sort", "-o", self.sort_bam])
+        if not exists(self.sort_bam) or self.overwrite:
+            # first align to reference sequence
+            self.run_cmd(["bwa", "index", self.ref_fa])
+            self.run_cmd(["bwa", "mem", "-t", "32", self.ref_fa, self.sra_r1, self.sra_r2,
+                        "|", "samtools", "view", "-b", "-F", "4",
+                        "|", "samtools","sort", "-o", self.sort_bam])
 
-    def trim_sra(self):
-        #trimming primers and base quality
-        self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
-        #checking trimmed vs non trimmed
-        self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
-        # TODO: Check if there's a better name for the following 
-        if not exists(self.final) or self.overwrite:
-            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference " +self.ref_fa+ " -Q", "0", self.trim_sort_bam,
-                          "|", "ivar", "variants", "-p", self.final, "-t", "0.3", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
-        # index the sortedbam file TODO: The following should be above?
-        self.run_cmd(["samtools", "index", self.trim_sort_bam])
-
-    def get_depths(self):
-        # get depth of the trimmed and sorted sorted bam file for later
+    def trim_to_bam(self):
+        if not exists(self.trim_sort_bam) or self.overwrite:
+            #trimming primers and base quality
+            self.run_cmd(["ivar", "trim", "-b", self.primer_bed, "-p", self.trim, "-i", self.sort_bam])
+            #checking trimmed vs non trimmed
+            self.run_cmd(["samtools", "sort", "-o", self.trim_sort_bam, self.trim_bam])
+            # index the sortedbam file
+        if not exists(self.trim_sort_bai) or self.overwrite:
+            self.run_cmd(["samtools", "index", self.trim_sort_bam])
+            # get depth of the trimmed and sorted bam file for later
         if not exists(self.trim_sort_dep) or self.overwrite:
             self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, ">", self.trim_sort_dep])
-        if not exists(self.sort_dep) or self.overwrite:
-            self.run_cmd(["samtools", "depth", "-a", self.sort_bam, ">", self.sort_dep])
+            # convert to fastq.gz for uploads
+        if not exists(self.out_r1) or not exists(self.out_r2) or self.overwrite:
+            self.run_cmd(["bedtools", "bamtofastq", "-i", self.trim_sort_bam, "-fq", self.out_r1, "-fq2", self.out_r2])
 
-    def consensus(self):
-        #getting consensus and info for masking
-        if not exists(self.trim_cons) or self.overwrite:
-            self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "-Q", "0", self.trim_sort_bam, 
-                          "|", "ivar", "consensus", "-p", self.trim_cons, "-n", "N"])
-            self.run_cmd(["bwa", "index", "-p", self.trim_cons, self.trim_cons_fa])
-
-        if not exists(self.sw_prim_cons_bam) or self.overwrite:
-            self.run_cmd(["bwa", "mem", "-k", "5", "-T", "16", self.trim_cons, self.primer_fa, 
-                          "|", "samtools", "view", "-bS", "-F", "4", 
-                          "|", "samtools", "sort", "-o", self.sw_prim_cons_bam])
-
-        self.run_cmd(["samtools", "mpileup", "-A", "-d", "0", "--reference", self.trim_cons_fa, "-Q", "0", self.sw_prim_cons_bam, 
-                      "|", "ivar", "variants", "-p", self.trim_cons, "-t", "0.3"])
-
-        if not exists(self.sw_prim_cons_bed) or self.overwrite:
-            self.run_cmd(["bedtools", "bamtobed", "-i", self.sw_prim_cons_bam, ">", self.sw_prim_cons_bed])
-
-        if not exists(self.prim_mis_ind) or self.overwrite:
-            self.run_cmd(["ivar", "getmasked", "-i", self.trim_cons_tsv, "-b", self.sw_prim_cons_bed, "-f", self.primer_tsv, "-p", self.prim_mis_ind])
-
-        #final analysis and masking
-        if not exists(self.mask_bam) or self.overwrite:
-            self.run_cmd(["ivar", "removereads", "-i", self.trim_sort_bam, "-p", self.mask_bam, "-t", self.prim_mis_ind+".txt", "-b", self.primer_bed])
-
-        if not exists(self.mask_sort_bam) or self.overwrite:
-            self.run_cmd(["samtools", "sort", "-o", self.mask_sort_bam, self.mask_bam])
-            # index the masked bam file for alcov analysis
-            self.run_cmd(["samtools", "index", self.mask_sort_bam])
-
-        if not exists(self.mask_sort_dep) or self.overwrite:
-            self.run_cmd(["samtools", "depth", "-a", self.mask_sort_bam, ">", self.mask_sort_dep])
-
-        if not exists(self.final_mask_0freq) or self.overwrite:
-            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference", self.ref_fa, "-Q", "0", self.mask_sort_bam, 
-                          "|", "ivar", "variants", "-p", self.final_mask_0freq, "-t", "0", "-q", "20", "-m", "20", "-r", self.ref_fa, "-g", self.ref_gff])
+    def variants(self):
+        # Run ivar to get variants
+        if not exists(self.final_ivar) or self.overwrite:
+            self.run_cmd(["samtools", "mpileup", "-aa", "-A", "-B", "-d", "0", "--reference " +self.ref_fa+ " -Q", "0", self.trim_sort_bam,
+                          "|", "ivar", "variants", "-p", self.final_ivar, "-t", "0", "-q", "20", "-m", "10", "-r", self.ref_fa, "-g", self.ref_gff])
+        # Run lofreq to get variants
+        if not exists(self.final_lofreq) or self.overwrite:
+            self.run_cmd(["lofreq", "indelqual", "--dindel", "-f", self.ref_fa, self.trim_sort_bam, "-o", self.trim_sort_indelqual])
+            self.run_cmd(["lofreq", "call", "-f", self.ref_fa, "--call-indels", "-o", self.final_lofreq, self.trim_sort_indelqual])
+        # variants are recorded in metrics, so don't run this if it exists
+        if not exists(self.metrics) or self.overwrite:
+            # Read ivar and lofreq
+            ivar_calls = read_ivar(self.final_ivar) if exists(self.final_ivar) else pd.DataFrame()
+            if len(ivar_calls.index) == 0:
+                logging.warning("Empty ivar dataframe :%s", self.final_ivar)
+            lofreq_calls = read_lofreq(self.final_lofreq) if exists(self.final_lofreq) else pd.DataFrame()
+            if len(lofreq_calls.index) == 0:
+                logging.warning("Empty lofreq dataframe :%s", self.final_lofreq)
+            merged_calls = merge_calls(ivar_calls, lofreq_calls)
+            filtered_merged_calls = filter_merged_calls(merged_calls)
+            filtered_merged_calls.to_csv(self.variants_merged, sep="\t", index=False)
+            with open("variants.csv", "w") as ofile:
+                if "Variant" in filtered_merged_calls.columns.tolist():
+                    print(",".join(filtered_merged_calls["Variant"].tolist()), end="", file=ofile)
+                else:
+                    print("", file=ofile)
 
     def collect_metrics(self):
+        if not exists(self.metrics) or self.overwrite:
+            if not exists(self.trim_sort_bam):
+                logging.warning("Cannot find the bam file :%s . Cannot collect metrics.", self.trim_sort_bam)
+            else:
+                # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
+                breadth, count, mean, variants = "final.bam.breadth", "final.bam.count", "final.bam.mean", "variants.csv"
+                self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                            "awk '{c++; if($3>10) total+=1} END {print total*100/c}'",
+                            ">", breadth], redirect=False)
+                self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, ">", count], redirect=False)
+                self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
+                            "awk '{c++;s+=$3}END{print s/c}'", ">", mean], redirect=False)
+                if exists(breadth):
+                    breadth = [y for y in open(breadth)]
+                    breadth = breadth[0].strip() if breadth else "0" 
+                else:
+                    breadth = "0" 
+                if exists(count):
+                    count = [y for y in open(count)]
+                    count = count[0].strip() if count else "0" 
+                else:
+                    count = "0" 
+                if exists(mean):
+                    mean = [y for y in open(mean)]
+                    mean = mean[0].strip() if mean else "0" 
+                else:
+                    mean = "0" 
+                if exists(variants):
+                    variants = [y for y in open(variants)]
+                    variants = variants[0].strip() if variants else "" 
+                else:
+                    variants = "0" 
+                    with open(self.metrics, "w") as ofile:
+                        ofile.write("\t".join([self.name, breadth, count, mean, variants]))
+
+    def plot(self):
         if not exists(self.trim_sort_bam):
             logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
         else:
-            # "Sample", "Breadth of coverage", "Total read count", "Mean reads"
-            breadth, count, mean = "final.bam.breadth", "final.bam.count", "final.bam.mean"
-            self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
-                          "awk '{c++; if($3>10) total+=1} END {print total*100/c}'",
-                          ">", breadth], redirect=False)
-            self.run_cmd(["samtools", "view", "-c", "-F", "4", self.trim_sort_bam, ">", count], redirect=False)
-            self.run_cmd(["samtools", "depth", "-a", self.trim_sort_bam, "|", 
-                                 "awk '{c++;s+=$3}END{print s/c}'", ">", mean], redirect=False)
-            breadth, count, mean = [y.strip() for x in [breadth, count, mean] for y in open(x)]
-            with open(self.metrics, "w") as ofile:
-                ofile.write("\t".join([self.name, breadth, count, mean]))
+            # use samtools to get stats and then plot
+            # if not exists(self.stats) or self.overwrite: 
+                # self.run_cmd(["samtools", "stats", self.trim_sort_bam, ">", self.stats], redirect=False)
+                # self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats], redirect=False)
+
+            # run freyja variant generation - this has to be done again for some reason
+            if not exists(self.freyja_variants) or self.overwrite:
+                self.run_cmd(["samtools mpileup -aa -A -d 600000 -Q 20 -q 0 -B -f", self.ref_fa, self.trim_sort_bam, "|",
+                              "tee >(cut -f1-4 > "+self.trim_sort_dep+")", "|",
+                              "ivar variants -p", self.freyja_variants, "-q 20 -t 0.0 -r", self.ref_fa])
+            # run freyja summary
+            if not exists(self.freyja_summary) or self.overwrite:
+                self.run_cmd(["freyja", "demix", self.freyja_variants, self.trim_sort_dep, "--output", self.freyja_summary])
 
     def move_files(self):
         if not PATH_TO_HOSTING.strip():
@@ -191,26 +215,15 @@ class SRAProcess(Process):
             path_to_move = join(PATH_TO_HOSTING, self.name)
             if not exists(path_to_move):
                 makedirs(path_to_move)
-            files_to_move = [self.alcov_dir, self.plot_dir]
+            files_to_move = [self.plot_dir]
             for mfile in files_to_move:
                 self.run_cmd(["mv", mfile, path_to_move])
-
-    def plot(self):
-        if not exists(self.trim_sort_bam):
-            logging.warning("Cannot find the bam file :%s", self.trim_sort_bam)
+        if not PATH_TO_AGGREGATE.strip():
+            logging.info("Skipping move to hosting directory. PATH_TO_HOSTING not configured.")
         else:
-            # use samtools to get stats and then plot
-            # samtools stats B1.masked.sorted.bam > B1.masked.sorted.bam.stats
-            self.run_cmd(["samtools", "stats", self.trim_sort_bam, ">", self.stats])
-            # plot-bamstats -p B1.masked.sorted.bam.plot B1.masked.sorted.bam.stats
-            self.run_cmd(["plot-bamstats", "-p", self.plot_dir+"/", self.stats])
-            # run alcov 
-            if not exists(self.alcov_dir):
-                makedirs(self.alcov_dir)
-            self.run_cmd(["alcov", "find_lineages", self.trim_sort_bam])
-            self.run_cmd(["alcov", "find_mutants", self.trim_sort_bam])
-            self.run_cmd(["alcov", "amplicon_coverage", self.trim_sort_bam])
-            self.run_cmd(["alcov", "gc_depth", self.trim_sort_bam])
+            files_to_copy = [self.freyja_summary]
+            for cfile in files_to_copy:
+                self.run_cmd(["cp", cfile, PATH_TO_AGGREGATE])
 
     def cleanup(self):
         logging.info("Running cleanup for %s", self.name)
@@ -218,22 +231,23 @@ class SRAProcess(Process):
             chdir(self.sdir)
         filelist = listdir()
         files_to_keep = [
-                            # self.sort_bam,
+                            self.sort_bam,
                             self.sort_dep,
                             self.trim_sort_bam,
                             self.trim_sort_bai,
                             self.trim_sort_dep,
-                            self.mask_sort_bam, 
-                            self.mask_sort_bai,
-                            self.mask_sort_dep,
-                            # self.final_mask_0freq,
-                            self.final+".tsv",
+                            self.out_r1,
+                            self.out_r2,
                             self.plot_dir,
-                            self.alcov_dir,
                             self.stats,
                             self.log_path,
                             self.std_out,
-                            self.metrics
+                            self.metrics,                   # metrics file
+                            self.final_ivar,                # variants from ivar
+                            self.final_lofreq,              # variants from lofreq 
+                            self.variants_merged,            # merged variants
+                            self.freyja_variants,
+                            self.freyja_summary
                         ]
         logging.info("Current dir contents: %s", " ".join(filelist))
         files_to_delete = [x for x in filelist if x not in files_to_keep]
@@ -250,18 +264,32 @@ class SRAProcess(Process):
         ret = None
         start_file_list = listdir()
         try:
-            # TODO: Subprocess doesn't support the pipe command by default
-            if "|" not in cmd_list and ">" not in cmd_list:
-                logging.info("--- Running SP '%s'", " ".join(cmd_list))
-                if redirect and not isdir("radx"): #dont print unless in the working directory
-                    with open(self.std_out, "a") as ofile:
-                        print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
-                        ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+            try:
+                # TODO: Subprocess doesn't support the pipe command by default
+                if "|" not in cmd_list and ">" not in cmd_list:
+                    logging.info("--- Running SP '%s'", " ".join(cmd_list))
+                    if redirect and not isdir("radx"): #dont print unless in the working directory
+                        with open(self.std_out, "a") as ofile:
+                            print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                            ret = subprocess.run(cmd_list, check=True, stdout=ofile, stderr=ofile)
+                    else:
+                        ret = subprocess.run(cmd_list, check=True)
+                    if ret.returncode != 0:
+                        logging.info("--- Return code '%s'", ret.returncode)
                 else:
-                    ret = subprocess.run(cmd_list, check=True)
-                if ret.returncode != 0:
-                    logging.info("--- Return code '%s'", ret.returncode)
-            else:
+                    logging.info("--- Running SP in shell '%s'", " ".join(cmd_list))
+                    if redirect and not isdir("radx"): #dont print unless in the working directory
+                        with open(self.std_out, "a") as ofile:
+                            print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
+                            ret = subprocess.run(" ".join(cmd_list), shell=True,
+                                                        executable="/bin/bash",
+                                                        check=True, stdout=ofile,
+                                                        stderr=ofile)
+                    else:
+                        ret = subprocess.run(cmd_list, check=True)
+                    if ret.returncode != 0:
+                        logging.info("--- Return code '%s'", ret.returncode)
+            except Exception as e:
                 if redirect and ">" not in cmd_list:
                     cmd_list += [">>", self.std_out]
                 logging.info("--- Running SYS '%s'", " ".join(cmd_list))
@@ -269,7 +297,6 @@ class SRAProcess(Process):
                     with open(self.std_out, "a") as ofile:
                         print("\n".join(["","-"*64," ".join(cmd_list),"-"*64,""]), file=ofile)
                 ret = system(" ".join(cmd_list))
-                logging.info("--- Return code '%s'", ret)
                 if ret != 0:
                     logging.info("--- Return code '%s'", ret)
             added_file_list = [x for x in listdir() if x not in start_file_list]

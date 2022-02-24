@@ -1,12 +1,13 @@
 import argparse
 import logging
 from os import listdir
-from os.path import join, isdir
+from os.path import join, isdir, exists
 import sys
 import pandas as pd
 from multiprocessing import Queue
 
-from radx import PATH_TO_SRA, PATH_TO_JOBS, SRAProcess
+from radx import SRAProcess
+from radx import GISAIDDownloader
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
                     filemode='a', filename='logs/radx.log',
@@ -14,8 +15,8 @@ logging.basicConfig(format='%(asctime)s: %(levelname)s:%(message)s',
 
 def process(args):
     # Get all valid fastq.gz files
-    sra_files = [x for x in listdir(PATH_TO_SRA) if x[-8:]=="fastq.gz"]
-    # sra_files = [x for x in listdir(PATH_TO_JOBS) if isdir(join(PATH_TO_JOBS, x))]
+    sra_files = [x for x in listdir(args.input) if x[-8:]=="fastq.gz"]
+    # sra_files = [x for x in listdir(PATH_TO_JOBS) if isdir(join(args.output, x))]
     # Store them without the extensions
     sra_files = [x.split(".")[0][:-3] for x in sra_files]
     logging.info("Found %s fastq.gz files from %s samples", len(sra_files), len(set(sra_files)))
@@ -36,6 +37,8 @@ def process(args):
                 logging.info("Processing %s", sra_file)
                 # TODO : Probably better to pass overwrite with start
                 sra_proc = SRAProcess(sra_file,
+                                      args.input,
+                                      args.output,
                                       overwrite=args.overwrite,
                                       queue=q)
                 sra_proc.start()
@@ -50,17 +53,33 @@ def process(args):
             sra_proc.start()
 
 def summarize(args):
-    with open(join(PATH_TO_JOBS, "metrics.tsv"), "w") as ofile:
-        print("\t".join(["name", "breadth", "count", "mean"]), file=ofile)
-        for x in listdir(PATH_TO_JOBS):
-            if not isdir(join(PATH_TO_JOBS, x)):
+    with open(join(args.output, "metrics.tsv"), "w") as ofile:
+        print("\t".join(["name", "breadth", "count", "mean", "variants"]), file=ofile)
+        for x in listdir(args.output):
+            if not isdir(join(args.output, x)):
                 continue
-            for line in open(join(PATH_TO_JOBS, x, x+"_metrics.tsv")):
-                print(line.strip(), file=ofile)
+            metric_file = join(args.output, x, x+"_metrics.tsv")
+            if exists(metric_file):
+                for line in open(metric_file):
+                    print(line.strip(), file=ofile)
+            else:
+                print("\t".join([x, "", "", "", ""]), file=ofile)
+
+def download_gisaid():
+    # download data
+    gdownloader = GISAIDDownloader()
+    gdownloader.dump_gisaid_data()
+    # download metadata
+    gdownloader = GISAIDDownloader()
+    gdownloader.dump_gisaid_metadata()
 
 def main():
     '''Main method : parse input arguments and train'''
     parser = argparse.ArgumentParser()
+    parser.add_argument('input', type=str,
+                        help='path where local fastq.gz files are stored')
+    parser.add_argument('output', type=str,
+                        help='path to store output files')
     parser.add_argument('--overwrite', action='store_true',
                         help='Redo all steps and overwrite preexisting files')
     parser.add_argument('--include', type=str, default=None,
@@ -80,3 +99,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    # download_gisaid()
