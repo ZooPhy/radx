@@ -13,9 +13,9 @@ Please install the following
 * [BWA 0.7.17](https://github.com/lh3/bwa)
 * [htslib 1.14](http://www.htslib.org/download/)
 * [samtools 1.14](http://www.htslib.org/download/)
-* [iVar 1.3](https://github.com/andersen-lab/ivar) - Mac users, please install iVar from source and not from conda.
+* [iVar 1.3](https://github.com/andersen-lab/ivar) - Mac users, please install iVar from source and not from conda
 * [bedtools 2.30.0](https://bedtools.readthedocs.io/en/latest/content/installation.html)
-* [alcov 0.1.1](https://github.com/amagge/alcov/) - fork of the original project available at (https://github.com/Ellmen/alcov/)
+* [Freyja 1.3.1](https://github.com/andersen-lab/Freyja) - Requires installation of [Usher](https://usher-wiki.readthedocs.io/en/latest/Installation.html) from source for regular updates of global trees.
 * [lofreq 2.1.5](https://github.com/CSB5/lofreq) - Mac users, please install from bioconda
 * [pyvcf 0.6.8](https://pyvcf.readthedocs.io/en/latest/)
 

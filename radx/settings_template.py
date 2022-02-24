@@ -24,3 +24,5 @@ PATH_TO_DOWNLOADS = ""
 PATH_TO_GISAID = "resources/gisaid/"
 # path to hosting directory for sharing
 PATH_TO_HOSTING = ""
+# path to aggregate directory for collection (absolute path)
+PATH_TO_AGGREGATE = "/Users/amagge/pyspace/radx/resources/aggregate_b05/"
