@@ -64,6 +64,7 @@ class SRAProcess(Process):
         self.sort_trim_ra_bam = self.name+"_sort_trim_ra.bam"
         self.sort_trim_ra_iq_bam = self.name+"_sort_trim_ra_iq.bam"
         self.sort_trim_ra_iq_rr_bam = self.name+"_sort_trim_ra_iq_rr.bam"
+        self.upload_bam = self.sort_trim_ra_iq_bam
         self.final_bam = self.sort_trim_ra_iq_rr_bam
         # move files if not fully processed or they don't exist already
         if not exists(join(self.sdir, self.final_bam)) or self.overwrite:
@@ -112,6 +113,10 @@ class SRAProcess(Process):
         self.trim_sort_ra_iq_rr_dep = self.name+"_trim_sort_ra_iq_rr.bam.depth"
 
         # Desginating final bam file for variant extraction
+        self.upload_bai = self.trim_sort_ra_iq_bai
+        self.upload_dep = self.trim_sort_ra_iq_dep
+
+        # Desginating final bam file for variant extraction
         self.final_bai = self.trim_sort_ra_iq_rr_bai
         self.final_dep = self.trim_sort_ra_iq_rr_dep
 
@@ -154,7 +159,7 @@ class SRAProcess(Process):
         if not exists(self.sort_trim_ra_bam) or self.overwrite:
             #realign with lofreq
             # TODO: check if we need to index the sorted trimmed bam file
-            self.run_cmd(["lofreq", "viterbi", "--defqual", "2", "-f", self.ref_fa, self.sort_trim_bam, "|"
+            self.run_cmd(["lofreq", "viterbi", "--defqual", "2", "-f", self.ref_fa, self.sort_trim_bam, "|",
                           "samtools", "sort", "-@", "32", "-o", self.sort_trim_ra_bam])
 
     def indelqual_call_filter(self):
@@ -185,15 +190,15 @@ class SRAProcess(Process):
             self.run_cmd(["ivar", "removereads", "-i", self.sort_trim_ra_iq_bam, "-b", self.primer_bed, "-t", self.primer_mismatch_indices_v2, "-p", self.sort_trim_ra_iq_rr_bam]) # final bam file
 
     def create_fastq_for_upload(self):
-        if not exists(self.final_bai) or self.overwrite:
+        if not exists(self.upload_bai) or self.overwrite:
             # index the final bm file
-            self.run_cmd(["samtools", "index", self.final_bam])
-        if not exists(self.final_dep) or self.overwrite:
+            self.run_cmd(["samtools", "index", self.upload_bam])
+        if not exists(self.upload_dep) or self.overwrite:
             # get depth of the trimmed and sorted bam file for later
-            self.run_cmd(["samtools", "depth", "-a", self.final_bam, ">", self.final_dep])
+            self.run_cmd(["samtools", "depth", "-a", self.upload_bam, ">", self.upload_dep])
         if not exists(self.out_r1) or not exists(self.out_r2) or self.overwrite:
             # convert to fastq.gz for uploads
-            self.run_cmd(["bedtools", "bamtofastq", "-i", self.final_bam, "-fq", self.out_r1, "-fq2", self.out_r2])
+            self.run_cmd(["bedtools", "bamtofastq", "-i", self.upload_bam, "-fq", self.out_r1, "-fq2", self.out_r2])
 
     def variants(self):
         # Run lofreq, vcfintersect to get variants
@@ -329,6 +334,7 @@ class SRAProcess(Process):
     def run_cmd(self, cmd_list, redirect=True, timeout=None):
         ret = None
         start_file_list = listdir()
+        start_time = time.time()
         try:
             try:
                 # TODO: Subprocess doesn't support the pipe command by default
@@ -367,7 +373,8 @@ class SRAProcess(Process):
                     logging.info("--- Return code '%s'", ret)
             added_file_list = [x for x in listdir() if x not in start_file_list]
             if not isdir("radx"):
-                logging.info("--- Added '%s' files '%s'", len(added_file_list), ", ".join(added_file_list))
+                time_taken = round(time.time() - start_time, 2)
+                logging.info("--- Completed in %ssecs - Added '%s' files '%s'", time_taken, len(added_file_list), ", ".join(added_file_list))
         except Exception as e:
             logging.info("--- ERROR encountered when processing command '%s'    Message: '%s'", 
                          ", ".join(cmd_list), repr(e))

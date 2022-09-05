@@ -10,9 +10,9 @@ Currently, the architecture and information flow in this pipeline is designed as
 # Requirements
 Please install the following 
 * [Python 3.7+](https://www.python.org) - Our code runs on Python
-* [BWA 0.7.17](https://github.com/lh3/bwa)
-* [htslib 1.14](http://www.htslib.org/download/)
-* [samtools 1.14](http://www.htslib.org/download/)
+* [BWA 0.7.17](https://github.com/lh3/bwa) - Can be installed using bioconda channel
+* [htslib 1.14](http://www.htslib.org/download/) - Can be installed using bioconda channel
+* [samtools 1.14](http://www.htslib.org/download/) - Can be installed using bioconda channel
 * [iVar 1.3](https://github.com/andersen-lab/ivar) - Mac users, please install iVar from source and not from conda
 * [bedtools 2.30.0](https://bedtools.readthedocs.io/en/latest/content/installation.html)
 * [Freyja 1.3.1](https://github.com/andersen-lab/Freyja) - Requires installation of [Usher](https://usher-wiki.readthedocs.io/en/latest/Installation.html) from source for regular updates of global trees.
@@ -25,9 +25,9 @@ export PATH="$PATH:PATH-TO-CUSTOM-LOCATION-CONTAINING-BINARIES"
 ```
 e.g.
 ```
-export PATH="$PATH:/Users/amagge/pyspace/radx/resources/bwa"
-export PATH="$PATH:/Users/amagge/pyspace/radx/resources/htslib/bin"
-export PATH="$PATH:/Users/amagge/pyspace/radx/resources/samtools/bin"
+export PATH="$PATH:/home/arjun/pyspace/radx/resources/bwa"
+export PATH="$PATH:/home/arjun/pyspace/radx/resources/htslib/bin"
+export PATH="$PATH:/home/arjun/pyspace/radx/resources/samtools/bin"
 ```
 
 # Installation instructions
