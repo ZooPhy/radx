@@ -32,15 +32,15 @@ class SRAProcess(Process):
         # Process the input files
         self.prep()
         self.align()
-        self.trim_realign()
-        self.indelqual_call_filter()
-        self.get_mismatched_indices()
-        self.remove_reads()
+        # self.trim_realign()
+        # self.indelqual_call_filter()
+        # self.get_mismatched_indices()
+        # self.remove_reads()
         self.create_fastq_for_upload()
-        self.variants()
+        # self.variants()
         # Analyze files
-        self.collect_metrics()
-        self.plot()
+        # self.collect_metrics()
+        # self.plot()
         # Perform logistics and cleanup
         self.move_files()
         self.cleanup()
@@ -64,7 +64,7 @@ class SRAProcess(Process):
         self.sort_trim_ra_bam = self.name+"_sort_trim_ra.bam"
         self.sort_trim_ra_iq_bam = self.name+"_sort_trim_ra_iq.bam"
         self.sort_trim_ra_iq_rr_bam = self.name+"_sort_trim_ra_iq_rr.bam"
-        self.upload_bam = self.sort_trim_ra_iq_bam
+        self.upload_bam = self.sort_bam
         self.final_bam = self.sort_trim_ra_iq_rr_bam
         # move files if not fully processed or they don't exist already
         if not exists(join(self.sdir, self.final_bam)) or self.overwrite:
@@ -113,16 +113,16 @@ class SRAProcess(Process):
         self.trim_sort_ra_iq_rr_dep = self.name+"_trim_sort_ra_iq_rr.bam.depth"
 
         # Desginating final bam file for variant extraction
-        self.upload_bai = self.trim_sort_ra_iq_bai
-        self.upload_dep = self.trim_sort_ra_iq_dep
+        self.upload_bai = self.sort_bai
+        self.upload_dep = self.sort_dep
 
         # Desginating final bam file for variant extraction
         self.final_bai = self.trim_sort_ra_iq_rr_bai
         self.final_dep = self.trim_sort_ra_iq_rr_dep
 
         # Final files for uploading to SRA
-        self.out_r1 = self.name+"_R1.fastq"
-        self.out_r2 = self.name+"_R2.fastq"
+        self.out_r1 = self.name+"_1.fastq"
+        self.out_r2 = self.name+"_2.fastq"
 
         # Intermediate files for variant extraction
         self.lofreq_1 = self.name+"_lofreq_1.vcf"
